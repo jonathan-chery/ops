@@ -7,7 +7,7 @@ set -euo pipefail
 # Configuration — Internal Network
 # ============================================================
 CT_ID=180
-RELEASE_TAG="v0.5.0"
+RELEASE_TAG="v1.2.0"
 REPO_URL="https://github.com/AnotiaWang/deep-research-web-ui.git"
 APP_DIR="/opt/deep-research-web-ui"
 APP_USER="deepresearch"
