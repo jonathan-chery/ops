@@ -377,6 +377,12 @@ fi
 if ! get_state "phase6_app_deployed"; then
     echo "=== Phase 6: Deploy Application ==="
 
+    # Preserve user .env if it exists (API keys, secrets)
+    pct exec "$CT_ID" -- bash -c "if [ -f ${APP_DIR}/.env ]; then cp ${APP_DIR}/.env /tmp/deepresearch_env_backup; echo '[BACKUP] Preserved existing .env with user API keys.'; else echo '[SKIP] No existing .env to preserve.'; fi"
+
+    # Idempotent: remove stale checkout before cloning
+    pct exec "$CT_ID" -- bash -c "rm -rf ${APP_DIR}"
+
     echo "Cloning repository at tag ${RELEASE_TAG}..."
     pct exec "$CT_ID" -- git clone --branch "$RELEASE_TAG" --depth 1 "$REPO_URL" "$APP_DIR"
 
@@ -394,45 +400,30 @@ cd ${APP_DIR}
 pnpm build
 INNER_BUILD
 
-    # Idempotent: only push .env if it does not already exist in the CT
-    if pct exec "$CT_ID" -- test -f "${APP_DIR}/.env"; then
-        echo "[SKIP] .env already exists in CT at ${APP_DIR}/.env. Not overwriting."
-        echo "       To update, edit it directly: pct exec ${CT_ID} -- nano ${APP_DIR}/.env"
+    # Restore user .env if it was backed up, otherwise push template
+    if pct exec "$CT_ID" -- test -f /tmp/deepresearch_env_backup; then
+        echo "[RESTORE] Restoring preserved .env with user API keys."
+        pct exec "$CT_ID" -- bash -c "cp /tmp/deepresearch_env_backup ${APP_DIR}/.env && rm -f /tmp/deepresearch_env_backup"
+        pct exec "$CT_ID" -- chown "${APP_USER}:${APP_USER}" "${APP_DIR}/.env"
+        pct exec "$CT_ID" -- chmod 600 "${APP_DIR}/.env"
     else
-        NEXTAUTH_SECRET_VAL=$(cat "${SNIPPET_DIR}/deepresearch_nextauth_secret.txt")
-        NEXTAUTH_URL="http://${CT_IP}:${APP_PORT}"
-
+        NEXTAUTH_SECRET_VAL=$(cat "${SNIPPET_DIR}/${CT_HOSTNAME}_nextauth_secret.txt")
         cat > /tmp/deepresearch_env <<INNER_ENV
-# ============================================================
-# deep-research-web-ui Environment Configuration
-# ============================================================
-
-# --- Authentication ---
 NEXTAUTH_SECRET="${NEXTAUTH_SECRET_VAL}"
-NEXTAUTH_URL="${NEXTAUTH_URL}"
-
-# --- AI Provider API Keys (FILL IN BEFORE STARTING) ---
-# Uncomment and set the keys for providers you intend to use:
+NEXTAUTH_URL="http://${CT_IP}:${APP_PORT}"
 # OPENAI_API_KEY=
 # GOOGLE_API_KEY=
 # GOOGLE_SEARCH_API_KEY=
 # DEEPSEEK_API_KEY=
 # OPENROUTER_API_KEY=
-
-# --- Database (SQLite local — no external DB required) ---
-# DATABASE_URL=file:local.db
-
-# --- Application ---
 PORT=${APP_PORT}
 NODE_ENV=production
 INNER_ENV
-
         pct push "$CT_ID" /tmp/deepresearch_env "${APP_DIR}/.env"
         rm -f /tmp/deepresearch_env
-
         pct exec "$CT_ID" -- chown "${APP_USER}:${APP_USER}" "${APP_DIR}/.env"
         pct exec "$CT_ID" -- chmod 600 "${APP_DIR}/.env"
-        echo "[NEW] .env pushed to CT at ${APP_DIR}/.env."
+        echo "[NEW] Template .env pushed."
     fi
 
     set_state "phase6_app_deployed"
