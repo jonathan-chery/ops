@@ -1,0 +1,20 @@
+[project]
+name = "ops"
+version = "0.1.0"
+description = "Proxmox LXC Orchestrator"
+dependencies = [
+    "typer[all]",
+    "pydantic",
+    "proxmoxer",
+    "requests",
+    "pyyaml",
+    "infisicalsdk",
+    "paramiko",
+]
+
+[project.scripts]
+ops = "ops.cli:app"
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"

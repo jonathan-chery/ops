@@ -1,0 +1,11 @@
+Metadata-Version: 2.4
+Name: ops
+Version: 0.1.0
+Summary: Proxmox LXC Orchestrator
+Requires-Dist: typer[all]
+Requires-Dist: pydantic
+Requires-Dist: proxmoxer
+Requires-Dist: requests
+Requires-Dist: pyyaml
+Requires-Dist: infisicalsdk
+Requires-Dist: paramiko

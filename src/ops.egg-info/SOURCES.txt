@@ -1,0 +1,13 @@
+pyproject.toml
+src/ops/cli.py
+src/ops.egg-info/PKG-INFO
+src/ops.egg-info/SOURCES.txt
+src/ops.egg-info/dependency_links.txt
+src/ops.egg-info/entry_points.txt
+src/ops.egg-info/requires.txt
+src/ops.egg-info/top_level.txt
+src/ops/core/blueprint.py
+src/ops/core/manager.py
+src/ops/core/orchestrator.py
+src/ops/providers/infisical.py
+src/ops/providers/proxmox.py

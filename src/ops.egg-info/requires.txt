@@ -1,0 +1,7 @@
+typer[all]
+pydantic
+proxmoxer
+requests
+pyyaml
+infisicalsdk
+paramiko
