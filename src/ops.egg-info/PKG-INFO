@@ -9,3 +9,17 @@ Requires-Dist: requests
 Requires-Dist: pyyaml
 Requires-Dist: infisicalsdk
 Requires-Dist: paramiko
+Requires-Dist: cryptography
+Requires-Dist: keyring
+Requires-Dist: jinja2
+Requires-Dist: psycopg2-binary
+Provides-Extra: build
+Requires-Dist: pyinstaller>=6.0; extra == "build"
+Requires-Dist: setuptools; extra == "build"
+Requires-Dist: wheel; extra == "build"
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: black; extra == "dev"
+Requires-Dist: ruff; extra == "dev"
+Requires-Dist: mypy; extra == "dev"
+Requires-Dist: pytest-cov; extra == "dev"

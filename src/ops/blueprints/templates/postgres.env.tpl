@@ -1,0 +1,4 @@
+POSTGRES_USER={{ environment.POSTGRES_USER }}
+POSTGRES_PASSWORD={{ secrets.POSTGRES_PASSWORD }}
+POSTGRES_DB={{ environment.POSTGRES_DB }}
+PGDATA={{ environment.PGDATA }}

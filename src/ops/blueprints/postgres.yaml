@@ -1,0 +1,51 @@
+version: "1.0"
+name: postgres
+description: PostgreSQL 16 server inside LXC
+
+container:
+  hostname: postgres
+  cores: 2
+  memory: 2048
+  disk: 20
+
+network:
+  bridge: vmbr1
+
+deployment:
+  type: docker
+  docker:
+    compose_file: docker-compose.yml
+    service_name: postgres
+    env_file: .env
+
+dependencies:
+  packages: [curl, ca-certificates]
+
+secrets:
+  - name: POSTGRES_PASSWORD
+    type: generated
+    length: 32
+
+environment:
+  POSTGRES_USER: postgres
+  POSTGRES_DB: postgres
+  PGDATA: /var/lib/postgresql/data
+
+templates:
+  - source: templates/postgres.env.tpl
+    dest: /opt/postgres/.env
+    mode: "600"
+  - source: templates/postgres-compose.yml.tpl
+    dest: /opt/postgres/docker-compose.yml
+    mode: "644"
+
+database:
+  enabled: false
+
+health_check:
+  enabled: true
+  url: "http://{ip}:5432"
+  method: GET
+  expected_status: 200
+  retries: 10
+  interval: 5

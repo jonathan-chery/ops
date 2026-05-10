@@ -1,0 +1,31 @@
+version: "1.0"
+name: lxc-docker
+description: Ubuntu 24.04 with Docker CE installed, no app deployed
+
+container:
+  hostname: lxc-docker
+  cores: 2
+  memory: 2048
+  disk: 20
+
+network:
+  bridge: vmbr1
+
+deployment:
+  type: docker
+  docker:
+    compose_file: docker-compose.yml
+    service_name: dummy
+
+dependencies:
+  packages: [curl, wget, ca-certificates, gnupg]
+
+secrets: []
+environment: {}
+templates: []
+
+database:
+  enabled: false
+
+health_check:
+  enabled: false

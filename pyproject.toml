@@ -10,6 +10,24 @@ dependencies = [
     "pyyaml",
     "infisicalsdk",
     "paramiko",
+    "cryptography",
+    "keyring",
+    "jinja2",
+    "psycopg2-binary",
+]
+
+[project.optional-dependencies]
+build = [
+    "pyinstaller>=6.0",
+    "setuptools",
+    "wheel",
+]
+dev = [
+    "pytest",
+    "black",
+    "ruff",
+    "mypy",
+    "pytest-cov",
 ]
 
 [project.scripts]
@@ -18,3 +36,17 @@ ops = "ops.cli:app"
 [build-system]
 requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["ops*"]
+
+[tool.pyinstaller]
+hiddenimports = [
+    "proxmoxer.backends.https",
+]
+
+data_files = [
+    "src/ops/blueprints/*.yaml",
+    "src/ops/blueprints/templates/*.tpl",
+]

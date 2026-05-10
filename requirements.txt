@@ -5,3 +5,7 @@ requests
 pyyaml
 infisicalsdk
 paramiko
+cryptography
+keyring
+jinja2
+psycopg2-binary

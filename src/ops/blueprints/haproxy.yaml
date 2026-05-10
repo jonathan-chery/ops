@@ -1,0 +1,44 @@
+version: "1.0"
+name: haproxy
+description: HAProxy load balancer inside LXC
+
+container:
+  hostname: haproxy
+  cores: 1
+  memory: 512
+  disk: 8
+
+network:
+  bridge: vmbr1
+
+deployment:
+  type: docker
+  docker:
+    compose_file: docker-compose.yml
+    service_name: haproxy
+
+dependencies:
+  packages: [curl, ca-certificates]
+
+secrets: []
+environment:
+  HAPROXY_PORT: 80
+
+templates:
+  - source: templates/haproxy-compose.yml.tpl
+    dest: /opt/haproxy/docker-compose.yml
+    mode: "644"
+  - source: templates/haproxy.cfg.tpl
+    dest: /opt/haproxy/haproxy.cfg
+    mode: "644"
+
+database:
+  enabled: false
+
+health_check:
+  enabled: true
+  url: "http://{ip}:80/stats"
+  method: GET
+  expected_status: 200
+  retries: 10
+  interval: 3

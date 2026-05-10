@@ -1,0 +1,32 @@
+version: "1.0"
+name: lxc-podman
+description: Ubuntu 24.04 with Podman installed, no app deployed
+
+container:
+  hostname: lxc-podman
+  cores: 2
+  memory: 2048
+  disk: 20
+
+network:
+  bridge: vmbr1
+
+deployment:
+  type: docker
+  docker:
+    compose_file: docker-compose.yml
+    service_name: dummy
+
+dependencies:
+  packages: [curl, wget, ca-certificates, gnupg, uidmap]
+  install_podman: true
+
+secrets: []
+environment: {}
+templates: []
+
+database:
+  enabled: false
+
+health_check:
+  enabled: false

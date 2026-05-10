@@ -1,0 +1,46 @@
+version: "1.0"
+name: cockroachdb
+description: CockroachDB single-node cluster inside LXC
+
+container:
+  hostname: cockroachdb
+  cores: 2
+  memory: 4096
+  disk: 30
+
+network:
+  bridge: vmbr1
+
+deployment:
+  type: docker
+  docker:
+    compose_file: docker-compose.yml
+    service_name: cockroachdb
+
+dependencies:
+  packages: [curl, ca-certificates]
+
+secrets:
+  - name: COCKROACH_PASSWORD
+    type: generated
+    length: 32
+
+environment:
+  COCKROACH_PORT: 26257
+  COCKROACH_HTTP_PORT: 8080
+
+templates:
+  - source: templates/cockroachdb-compose.yml.tpl
+    dest: /opt/cockroachdb/docker-compose.yml
+    mode: "644"
+
+database:
+  enabled: false
+
+health_check:
+  enabled: true
+  url: "http://{ip}:8080/health?ready=1"
+  method: GET
+  expected_status: 200
+  retries: 20
+  interval: 5

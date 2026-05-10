@@ -1,0 +1,38 @@
+version: "1.0"
+name: simple-lxc
+description: Bare Ubuntu 24.04 LXC container with SSH hardening only
+
+container:
+  hostname: simple-lxc
+  cores: 1
+  memory: 512
+  disk: 8
+
+network:
+  bridge: vmbr1
+
+deployment:
+  type: native
+
+    # No git repo, no service - vanilla container
+  native:
+    app_dir: /opt/app
+    app_user: appuser
+    service_command: "sleep infinity"
+    # build_steps is intentionally empty - no app to build
+    build_steps: []
+
+dependencies:
+  packages: [curl, wget, ca-certificates]
+
+secrets: []
+environment: {}
+
+# No templates to push - vanilla container
+templates: []
+
+database:
+  enabled: false
+
+health_check:
+  enabled: false
