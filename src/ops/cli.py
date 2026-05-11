@@ -216,35 +216,64 @@ def exec_cmd(
     raise typer.Exit(result.exit_code)
 
 
+def _microvm_provider_for(orchestrator, blueprint):
+    from ops.core.config import ConfigManager
+    from ops.utils.secrets import SecretManager
+    from ops.utils.ssh import SSHKeyManager
+    from ops.providers.microvm import MicroVMProvider
+    config_mgr = ConfigManager()
+    secret_mgr = SecretManager(config_mgr, blueprint.name)
+    ssh_mgr = SSHKeyManager(secret_mgr.secrets_dir)
+    host = orchestrator._host_config
+    return MicroVMProvider(
+        hostname=host.host,
+        username=host.user,
+        port=host.port,
+        private_key_path=ssh_mgr.get_private_key("root"),
+    )
+
+
 @app.command()
 def start(app_name: str):
-    """Start a container."""
+    """Start a container or microVM."""
     state_mgr = StateManager()
     state = state_mgr.load(app_name)
     if not state or not state.vmid:
         typer.echo(f"[WARN] No container found for {app_name}")
         raise typer.Exit(1)
     orchestrator = _get_orchestrator()
-    orchestrator.proxmox.start_lxc(state.vmid, state.node)
-    typer.echo(f"[OK] Container {app_name} started")
+    if state.backend == "pve-microvm":
+        blueprint_mgr = _get_blueprint_manager()
+        blueprint = blueprint_mgr.load(app_name)
+        microvm = _microvm_provider_for(orchestrator, blueprint)
+        microvm.start_vm(state.vmid)
+    else:
+        orchestrator.proxmox.start_lxc(state.vmid, state.node)
+    typer.echo(f"[OK] {app_name} started")
 
 
 @app.command()
 def stop(app_name: str):
-    """Stop a container."""
+    """Stop a container or microVM."""
     state_mgr = StateManager()
     state = state_mgr.load(app_name)
     if not state or not state.vmid:
         typer.echo(f"[WARN] No container found for {app_name}")
         raise typer.Exit(1)
     orchestrator = _get_orchestrator()
-    orchestrator.proxmox.stop_lxc(state.vmid, state.node)
-    typer.echo(f"[OK] Container {app_name} stopped")
+    if state.backend == "pve-microvm":
+        blueprint_mgr = _get_blueprint_manager()
+        blueprint = blueprint_mgr.load(app_name)
+        microvm = _microvm_provider_for(orchestrator, blueprint)
+        microvm.stop_vm(state.vmid)
+    else:
+        orchestrator.proxmox.stop_lxc(state.vmid, state.node)
+    typer.echo(f"[OK] {app_name} stopped")
 
 
 @app.command()
 def restart(app_name: str):
-    """Restart the application service inside the container."""
+    """Restart the application service inside the container or microVM."""
     blueprint_mgr = _get_blueprint_manager()
     blueprint = blueprint_mgr.load(app_name)
     orchestrator = _get_orchestrator()
