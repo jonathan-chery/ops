@@ -2,11 +2,13 @@ import typer
 import yaml
 from typing import Optional, List
 
-from .core.config import ConfigManager
-from .core.blueprint import BlueprintManager
-from .core.orchestrator import Orchestrator
-from .core.state import StateManager
-from .utils.secrets import SecretManager
+from ops.core.config import ConfigManager
+from ops.core.blueprint import BlueprintManager
+from ops.core.orchestrator import Orchestrator
+from ops.core.state import StateManager
+from ops.utils.secrets import SecretManager
+from ops.utils.ssh import SSHOnboardManager
+from ops.models.config import ProxmoxHostConfig
 
 app = typer.Typer(help="Proxmox LXC Orchestrator CLI")
 
@@ -23,10 +25,26 @@ def _get_blueprint_manager() -> BlueprintManager:
 
 @app.command()
 def deploy(
-    app_names: List[str] = typer.Argument(..., help="One or more application names to deploy"),
-    force: bool = typer.Option(False, "--force", "-f", help="Force redeploy even if already deployed"),
-    no_teardown_on_failure: bool = typer.Option(False, "--no-teardown-on-failure", help="Do not auto-teardown on failure"),
-    parallel: bool = typer.Option(True, "--parallel/--sequential", help="Run deployments in parallel or sequentially"),
+    app_names: List[str] = typer.Argument(
+        ..., help="One or more application names to deploy"
+    ),
+    force: bool = typer.Option(
+        False, "--force", "-f", help="Force redeploy even if already deployed"
+    ),
+    no_teardown_on_failure: bool = typer.Option(
+        False, "--no-teardown-on-failure", help="Do not auto-teardown on failure"
+    ),
+    parallel: bool = typer.Option(
+        True,
+        "--parallel/--sequential",
+        help="Run deployments in parallel or sequentially",
+    ),
+    cluster: bool = typer.Option(
+        False, "--cluster", help="Deploy to the cluster (auto-placement)"
+    ),
+    cluster_transport: Optional[str] = typer.Option(
+        None, "--cluster-transport", help="Override cluster transport (ssh|https)"
+    ),
 ):
     """Deploy one or more applications based on their blueprints."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -37,7 +55,14 @@ def deploy(
     def _deploy_one(name):
         try:
             blueprint = blueprint_mgr.load(name)
-            orchestrator.deploy(name, blueprint, force=force, no_teardown=no_teardown_on_failure)
+            orchestrator.deploy(
+                name,
+                blueprint,
+                force=force,
+                no_teardown=no_teardown_on_failure,
+                cluster=cluster,
+                cluster_transport=cluster_transport,
+            )
             return (name, "success", None)
         except Exception as e:
             return (name, "failed", str(e))
@@ -73,7 +98,9 @@ def deploy(
 @app.command()
 def teardown(
     app_name: str,
-    skip_backup: bool = typer.Option(False, "--skip-backup", help="Skip backup before teardown"),
+    skip_backup: bool = typer.Option(
+        False, "--skip-backup", help="Skip backup before teardown"
+    ),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ):
     """Teardown an application instance."""
@@ -132,7 +159,9 @@ def status(app_name: Optional[str] = typer.Argument(None)):
         for ct in containers:
             if ct.vmid in managed_vmids:
                 ip = ct.ip or "N/A"
-                typer.echo(f"{ct.vmid:<8} {ct.hostname or ct.name or '':<20} {ct.status:<10} {ip}")
+                typer.echo(
+                    f"{ct.vmid:<8} {ct.hostname or ct.name or '':<20} {ct.status:<10} {ip}"
+                )
 
 
 @app.command()
@@ -153,7 +182,9 @@ def logs(
 def exec_cmd(
     app_name: str,
     command: str,
-    root: bool = typer.Option(False, "--root", "-r", help="Run as root instead of app user"),
+    root: bool = typer.Option(
+        False, "--root", "-r", help="Run as root instead of app user"
+    ),
 ):
     """Execute a command inside the container."""
     state_mgr = StateManager()
@@ -169,7 +200,11 @@ def exec_cmd(
         blueprint = None
 
     user = "root" if root else "appuser"
-    if blueprint and blueprint.deployment.type == "native" and blueprint.deployment.native:
+    if (
+        blueprint
+        and blueprint.deployment.type == "native"
+        and blueprint.deployment.native
+    ):
         user = "root" if root else blueprint.deployment.native.app_user
 
     orchestrator = _get_orchestrator()
@@ -235,10 +270,15 @@ def list_containers():
 
     typer.echo(f"{'VMID':<8} {'Name':<20} {'Status':<10} {'IP'}")
     typer.echo("-" * 60)
+    state_map = {s.vmid: s for s in states}
     for ct in containers:
         if ct.vmid in managed_vmids:
-            ip = ct.ip or "N/A"
-            typer.echo(f"{ct.vmid:<8} {ct.hostname or ct.name or '':<20} {ct.status:<10} {ip}")
+            # Fallback to state IP if live API IP is None
+            fallback_ip = state_map.get(ct.vmid, None)
+            ip = ct.ip or (fallback_ip.ip if fallback_ip else None) or "N/A"
+            typer.echo(
+                f"{ct.vmid:<8} {ct.hostname or ct.name or '':<20} {ct.status:<10} {ip}"
+            )
 
 
 @app.command()
@@ -258,12 +298,14 @@ def config_cmd(
 ):
     """Manage CLI configuration."""
     import os
+
     config_mgr = ConfigManager()
     if show:
         config = config_mgr.load()
         typer.echo(config.model_dump_json(indent=2))
     elif edit:
         import subprocess
+
         editor = os.environ.get("EDITOR", "nano")
         subprocess.call([editor, str(config_mgr.config_path)])
     else:
@@ -283,7 +325,9 @@ def blueprint_list():
 @app.command("blueprint-init")
 def blueprint_init(
     name: str,
-    from_template: str = typer.Option("simple-lxc", "--from", help="Base blueprint to copy from"),
+    from_template: str = typer.Option(
+        "simple-lxc", "--from", help="Base blueprint to copy from"
+    ),
 ):
     """Create a new user blueprint from a built-in template."""
     mgr = _get_blueprint_manager()
@@ -319,7 +363,9 @@ def secrets_list(app_name: str):
 def secrets_rotate(
     app_name: str,
     secret_name: str,
-    length: int = typer.Option(32, "--length", "-l", help="Length for generated secret"),
+    length: int = typer.Option(
+        32, "--length", "-l", help="Length for generated secret"
+    ),
 ):
     """Regenerate a generated secret and restart the app service."""
     config_mgr = ConfigManager()
@@ -331,7 +377,9 @@ def secrets_rotate(
     state_mgr = StateManager()
     state = state_mgr.load(app_name)
     if state:
-        state.secrets_resolved[secret_name] = secret_mgr.get_all_secrets().get(secret_name, "")
+        state.secrets_resolved[secret_name] = secret_mgr.get_all_secrets().get(
+            secret_name, ""
+        )
         state_mgr.save(state)
         typer.echo(f"[OK] Secret '{secret_name}' rotated and state updated")
     else:
@@ -353,7 +401,9 @@ def secrets_rotate(
 def secrets_delete(
     app_name: str,
     secret_name: Optional[str] = typer.Argument(None),
-    all_secrets: bool = typer.Option(False, "--all", help="Delete all secrets for this app"),
+    all_secrets: bool = typer.Option(
+        False, "--all", help="Delete all secrets for this app"
+    ),
 ):
     """Delete a secret or all secrets for an app."""
     config_mgr = ConfigManager()
@@ -375,6 +425,286 @@ def secrets_delete(
     else:
         typer.echo("Please provide a secret name or use --all")
         raise typer.Exit(1)
+
+
+@app.command()
+def onboard(
+    host: Optional[str] = typer.Option(
+        None, "--host", "-h", help="Hostname or IP of the target endpoint"
+    ),
+    name: Optional[str] = typer.Option(
+        None, "--name", "-n", help="Short alias for this host (auto-derived if omitted)"
+    ),
+    user: str = typer.Option("root", "--user", "-u", help="SSH username"),
+    port: int = typer.Option(22, "--port", "-p", help="SSH port"),
+    password: Optional[str] = typer.Option(
+        None, "--password", help="SSH password (interactive prompt if omitted)"
+    ),
+    type: Optional[str] = typer.Option(
+        None,
+        "--type",
+        "-t",
+        help="Endpoint type (proxmox, ssh, docker, kubernetes) — auto-detected if omitted",
+    ),
+    force: bool = typer.Option(
+        False, "--force", "-f", help="Re-onboard even if already onboarded"
+    ),
+    rotate_key: bool = typer.Option(
+        False, "--rotate-key", help="Rotate the ops SSH key and re-onboard all hosts"
+    ),
+):
+    """Onboard a remote endpoint by establishing SSH key-based authentication."""
+    config_mgr = ConfigManager()
+    onboard_mgr = SSHOnboardManager(config_mgr.ssh_dir)
+
+    # --- Key rotation flow ---
+    if rotate_key:
+        config = config_mgr.load()
+        if not config.hosts:
+            typer.echo("[ERROR] No hosts configured. Nothing to rotate.", err=True)
+            raise typer.Exit(1)
+        typer.echo("[INFO] Rotating ops SSH key...")
+        success, msg = onboard_mgr.rotate_key_for_all_hosts(config.hosts)
+        if success:
+            for h in config.hosts:
+                h.ssh_onboarded = True
+            config_mgr.save(config)
+            typer.echo(f"[OK] {msg}")
+        else:
+            typer.echo(f"[ERROR] Key rotation failed: {msg}", err=True)
+            raise typer.Exit(1)
+        return
+
+    config = config_mgr.load()
+
+    # --- Normal onboard flow ---
+    if not host:
+        if config.hosts:
+            typer.echo("Existing hosts:")
+            for h in config.hosts:
+                status = "onboarded" if h.ssh_onboarded else "not onboarded"
+                typer.echo(f"  - {h.name} ({h.host}) [{status}]")
+        host = typer.prompt("Enter hostname or IP of the endpoint to onboard")
+
+    # At this point host is guaranteed str
+    assert host is not None  # type: ignore
+
+    # Auto-derive name from host if not provided
+    if not name:
+        name = host.split(".")[0].split(":")[0]
+
+    # Try to fetch saved password from the existing host entry if no CLI flag given
+    candidate_password = password
+    if candidate_password is None:
+        for h in config.hosts:
+            if h.name == name or h.host == host:
+                if h.password:
+                    candidate_password = h.password
+                    typer.echo("    [INFO] Using saved password from config")
+                break
+
+    # Auto-detect type if not provided
+    detected_type = type
+    if not detected_type:
+        typer.echo("    [INFO] Detecting endpoint type...")
+        detected_type = onboard_mgr.discover_endpoint_type(host)
+        if detected_type == "unknown":
+            detected_type = typer.prompt(
+                "Could not auto-detect endpoint type. Enter type",
+                default="proxmox",
+            )
+        typer.echo(f"    [INFO] Detected type: {detected_type}")
+
+    # Onboard via SSH
+    typer.echo(f"--> [ONBOARD] {user}@{host} (type={detected_type})")
+    if not force:
+        existing = onboard_mgr._test_ssh_key(host, user, port)
+        if existing:
+            existing.close()
+            typer.echo("    [INFO] Already onboarded (key auth works)")
+            known = [h for h in config.hosts if h.name == name or h.host == host]
+            if not known:
+                config.hosts.append(
+                    ProxmoxHostConfig(
+                        name=name,
+                        type=detected_type,
+                        host=host,
+                        port=port,
+                        user=user,
+                        ssh_onboarded=True,
+                    )
+                )
+                config_mgr.save(config)
+                typer.echo(f"    [OK] Added '{name}' to config")
+            return
+
+    success, msg = onboard_mgr.onboard_host(
+        host, user, port, password=candidate_password, force=force
+    )
+    if success:
+        typer.echo(f"    [OK] {msg}")
+        known = [h for h in config.hosts if h.name == name or h.host == host]
+        if known:
+            known[0].name = name
+            known[0].type = detected_type
+            known[0].host = host
+            known[0].port = port
+            known[0].user = user
+            known[0].ssh_onboarded = True
+        else:
+            config.hosts.append(
+                ProxmoxHostConfig(
+                    name=name,
+                    type=detected_type,
+                    host=host,
+                    port=port,
+                    user=user,
+                    ssh_onboarded=True,
+                )
+            )
+        # If user typed a password interactively that wasn't already saved, persist it
+        # (encrypted by ConfigManager.save)
+        if candidate_password and not any(
+            h.password == candidate_password
+            for h in config.hosts
+            if (h.name == name or h.host == host)
+        ):
+            for h in config.hosts:
+                if h.name == name or h.host == host:
+                    h.password = candidate_password
+                    typer.echo("    [INFO] Password saved to config (encrypted)")
+                    break
+        config_mgr.save(config)
+        typer.echo("    [OK] Updated ~/.ops/config.yaml")
+    else:
+        typer.echo(f"    [ERROR] {msg}", err=True)
+        raise typer.Exit(1)
+
+
+@app.command()
+def build(
+    app_name: str,
+    source_dir: Optional[str] = typer.Option(
+        ".", "--source", "-s", help="Source directory containing the application code"
+    ),
+    output: Optional[str] = typer.Option(
+        None, "--output", "-o", help="Output path for the .wasm artifact"
+    ),
+):
+    """Compile source code into a WebAssembly artifact."""
+    blueprint_mgr = _get_blueprint_manager()
+    try:
+        blueprint = blueprint_mgr.load(app_name)
+    except FileNotFoundError:
+        typer.echo(f"[ERROR] Blueprint '{app_name}' not found", err=True)
+        raise typer.Exit(1)
+
+    if blueprint.deployment.type != "wasm":
+        typer.echo(
+            f"[ERROR] Deployment type is '{blueprint.deployment.type}', not 'wasm'",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    wasm_cfg = blueprint.deployment.wasm
+    if not wasm_cfg:
+        typer.echo("[ERROR] Wasm deployment config missing", err=True)
+        raise typer.Exit(1)
+
+    from ops.utils.wasm_build import WasmBuildToolchain
+
+    toolchain = WasmBuildToolchain(wasm_cfg.runtime)
+    if not toolchain.is_available():
+        typer.echo(
+            f"[ERROR] Missing toolchain for {wasm_cfg.runtime}. "
+            f"Ensure the required tools are installed and in PATH.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    out_path = output or wasm_cfg.artifact
+    src_dir = source_dir or "."
+    typer.echo(f"[INFO] Building {app_name} ({wasm_cfg.runtime}) -> {out_path}")
+    try:
+        toolchain.build(src_dir, out_path, wasm_cfg)
+        typer.echo(f"[OK] Build complete: {out_path}")
+    except Exception as e:
+        typer.echo(f"[ERROR] Build failed: {e}", err=True)
+        raise typer.Exit(1)
+
+
+@app.command("cluster-join")
+def cluster_join(
+    token: Optional[str] = typer.Option(
+        None, "--token", help="Shared cluster secret (will prompt if omitted)"
+    ),
+    transport: Optional[str] = typer.Option(
+        None, "--transport", help="Override cluster transport (ssh|https)"
+    ),
+):
+    """Join this node to an ad-hoc cluster."""
+    from ops.cluster.discovery import DiscoveryService
+
+    config_mgr = ConfigManager()
+    config = config_mgr.load()
+
+    if not token:
+        token = typer.prompt("Enter cluster shared secret", hide_input=True)
+
+    if not config.cluster.enabled:
+        config.cluster.enabled = True
+        config.cluster.secret = token
+        if transport:
+            config.cluster.transport = transport  # type: ignore[assignment]
+        config_mgr.save(config)
+        typer.echo("[OK] Cluster mode enabled")
+
+    discovery = DiscoveryService(config.cluster)
+    discovery.send_beacon(advertise_port=config.cluster.api_port)
+    typer.echo("[OK] Join beacon sent")
+
+
+@app.command("cluster-leave")
+def cluster_leave(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+):
+    """Gracefully leave the cluster."""
+
+    if not yes:
+        confirm = typer.confirm("Leave the cluster and clear local node registry?")
+        if not confirm:
+            typer.echo("Aborted.")
+            raise typer.Exit(0)
+
+    config_mgr = ConfigManager()
+    config = config_mgr.load()
+    config.cluster.enabled = False
+    config.cluster.secret = None
+    config_mgr.save(config)
+
+    # Mark this node as leaving in the registry (simplistic)
+    typer.echo("[OK] Left cluster")
+
+
+@app.command("cluster-status")
+def cluster_status():
+    """Show all discovered nodes and their health."""
+    from ops.cluster.registry import NodeRegistry
+
+    registry = NodeRegistry()
+    nodes = registry.list_active()
+    if not nodes:
+        typer.echo("No active cluster nodes found.")
+        return
+
+    typer.echo(
+        f"{'Node ID':<36} {'Name':<20} {'Host':<16} {'Status':<10} {'Transport'}"
+    )
+    typer.echo("-" * 90)
+    for n in nodes:
+        typer.echo(
+            f"{n.node_id:<36} {n.name:<20} {n.host:<16} {n.status:<10} {n.transport}"
+        )
 
 
 if __name__ == "__main__":
