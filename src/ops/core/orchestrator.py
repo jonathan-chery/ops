@@ -1,39 +1,67 @@
 import time
-import os
 import base64
 from pathlib import Path
-from typing import Dict, List, Optional
-from ipaddress import IPv4Network
+from typing import Optional
 
-from ..models.blueprint import AppBlueprint
-from ..models.state import DeploymentPhase, DeploymentState
-from ..models.config import OpsConfig
-from ..providers.proxmox import ProxmoxProvider
-from ..providers.database import DatabaseProvider
-from ..providers.infisical import InfisicalProvider
-from ..utils.secrets import SecretManager
-from ..utils.network import IPAllocator
-from ..utils.ssh import SSHKeyManager
-from ..utils.templates import TemplateEngine
-from ..core.config import ConfigManager
-from ..core.state import StateManager
-from ..core.heartbeat import HeartbeatManager
-from ..deployers.docker import DockerDeployer
-from ..deployers.native import NativeDeployer
+from ops.models.blueprint import AppBlueprint
+from ops.models.state import DeploymentPhase, DeploymentState
+from ops.models.config import OpsConfig
+from ops.providers.proxmox import ProxmoxProvider
+from ops.providers.database import DatabaseProvider
+from ops.providers.infisical import InfisicalProvider
+from ops.utils.secrets import SecretManager
+from ops.utils.network import IPAllocator
+from ops.utils.ssh import SSHKeyManager
+from ops.utils.templates import TemplateEngine
+from ops.utils.safe_shell import quote
+from ops.core.config import ConfigManager
+from ops.core.state import StateManager
+from ops.core.heartbeat import HeartbeatManager
+from ops.core.audit import AuditLogger
+from ops.deployers.docker import DockerDeployer
+from ops.deployers.native import NativeDeployer
 
 
 class Orchestrator:
     def __init__(self, config: OpsConfig):
         self.config = config
-        self.proxmox = ProxmoxProvider(config.proxmox)
-        self.db_provider = DatabaseProvider(config.database) if config.database.host else None
-        self.infisical = InfisicalProvider(config.infisical) if config.infisical.client_id else None
+        # Use the first host as the primary Proxmox provider
+        host_config = config.hosts[0] if config.hosts else None
+        if not host_config:
+            raise RuntimeError(
+                "No Proxmox hosts configured. Run 'ops onboard --host <host>' first."
+            )
+        self.proxmox = ProxmoxProvider(host_config)
+        self.db_provider = (
+            DatabaseProvider(config.database) if config.database.host else None
+        )
+        self.infisical = (
+            InfisicalProvider(config.infisical) if config.infisical.client_id else None
+        )
         self.state_mgr = StateManager()
         self.hb_mgr = HeartbeatManager()
         self.ip_alloc = IPAllocator(config.network)
         self.template_engine = TemplateEngine()
+        self.audit = AuditLogger()
+        self._host_name = host_config.name
 
-    def _get_state(self, app_name: str) -> DeploymentState:
+    def _audit_start(self, command: str, vmid: Optional[int] = None, details: str = ""):
+        self.audit.log(
+            command, host=self._host_name, vmid=vmid, status="started", details=details
+        )
+
+    def _audit_end(
+        self,
+        command: str,
+        vmid: Optional[int] = None,
+        success: bool = True,
+        details: str = "",
+    ):
+        self.audit.log_result(
+            command, host=self._host_name, vmid=vmid, success=success, details=details
+        )
+
+    def _get_state(self, app_name: str):
         state = self.state_mgr.load(app_name)
         if not state:
             state = DeploymentState(app_name=app_name)
@@ -42,7 +70,7 @@ class Orchestrator:
     def _save_state(self, state: DeploymentState):
         self.state_mgr.save(state)
 
-    def _resolve_secrets(self, app_name: str, blueprint: AppBlueprint) -> Dict[str, str]:
+    def _resolve_secrets(self, app_name: str, blueprint: AppBlueprint):
         config_mgr = ConfigManager()
         secret_mgr = SecretManager(config_mgr, app_name)
         secrets = {}
@@ -50,7 +78,10 @@ class Orchestrator:
         for cfg in blueprint.secrets:
             if cfg.type == "infisical" and self.infisical:
                 sv = self.infisical.resolve_secret(
-                    cfg.name, cfg.path or "/", cfg.key or cfg.name, self.config.defaults.environment
+                    cfg.name,
+                    cfg.path or "/",
+                    cfg.key or cfg.name,
+                    self.config.defaults.environment,
                 )
                 secrets[cfg.name] = sv.value
             else:
@@ -59,7 +90,15 @@ class Orchestrator:
 
         return secrets
 
-    def deploy(self, app_name: str, blueprint: AppBlueprint, force: bool = False, no_teardown: bool = False):
+    def deploy(
+        self,
+        app_name: str,
+        blueprint: AppBlueprint,
+        force: bool = False,
+        no_teardown: bool = False,
+        cluster: bool = False,
+        cluster_transport: Optional[str] = None,
+    ):
         state = self._get_state(app_name)
 
         if state.completed and not force:
@@ -70,6 +109,9 @@ class Orchestrator:
             # Reset state for full redeploy
             state = DeploymentState(app_name=app_name)
 
+        self._audit_start(
+            "deploy", vmid=state.vmid, details=f"blueprint={blueprint.name}"
+        )
         try:
             self._phase_preflight(state, blueprint)
             self._phase_provision(state, blueprint)
@@ -81,14 +123,18 @@ class Orchestrator:
 
             state.completed = True
             self._save_state(state)
+            self._audit_end("deploy", vmid=state.vmid, success=True)
             print(f"[OK] {app_name} deployed successfully at {state.ip}")
 
         except Exception as e:
             state.add_error(str(e))
             self._save_state(state)
+            self._audit_end("deploy", vmid=state.vmid, success=False, details=str(e))
             print(f"[ERROR] Deployment failed: {e}")
 
-            auto_teardown = not no_teardown and self.config.defaults.auto_teardown_on_failure
+            auto_teardown = (
+                not no_teardown and self.config.defaults.auto_teardown_on_failure
+            )
             if auto_teardown:
                 print("[INFO] Auto-teardown enabled. Cleaning up...")
                 self.teardown(app_name, blueprint, skip_backup=True)
@@ -101,27 +147,17 @@ class Orchestrator:
 
         print("--> [PREFLIGHT] Validating and preparing...")
 
-        # Check if template exists, download if missing
-        templates = self.proxmox.get_available_templates(self.config.storage.pool)
+        # Resolve template (works with restricted API tokens — no storage perms needed)
         template_name = self.config.defaults.template
-        template_volid = None
-        for t in templates:
-            if template_name in t:
-                template_volid = t
-                break
-
-        if not template_volid:
-            print(f"    [INFO] Template '{template_name}' not found. Attempting to download...")
-            self.proxmox.download_template(self.config.storage.pool)
-            templates = self.proxmox.get_available_templates(self.config.storage.pool)
-            for t in templates:
-                if template_name in t:
-                    template_volid = t
-                    break
-            if not template_volid:
-                raise RuntimeError(
-                    f"Template '{template_name}' could not be downloaded or found in storage '{self.config.storage.pool}'"
-                )
+        template_volid = self.proxmox.resolve_template_volid(
+            template_name, self.config.storage.pool, self.proxmox._get_node()
+        )
+        if template_volid:
+            print(f"    [INFO] Template resolved: {template_volid}")
+        else:
+            print(
+                f"    [WARN] Template '{template_name}' could not be resolved via API. Will attempt at provision time."
+            )
 
         # Allocate VMID and IP
         used_vmids = self.proxmox.get_used_vmids()
@@ -158,26 +194,25 @@ class Orchestrator:
 
         print("--> [PROVISION] Creating LXC container...")
 
-        templates = self.proxmox.get_available_templates(self.config.storage.pool)
+        # Resolve template volid. Works with restricted tokens (no storage perms needed).
         template_name = self.config.defaults.template
-        template_volid = None
-        for t in templates:
-            if template_name in t:
-                template_volid = t
-                break
+        template_volid = self.proxmox.resolve_template_volid(
+            template_name, self.config.storage.pool, state.node
+        )
         if not template_volid:
-            raise RuntimeError(f"Template '{template_name}' not found in storage '{self.config.storage.pool}'")
-
-        # Generate root password
-        config_mgr = ConfigManager()
-        secret_mgr = SecretManager(config_mgr, blueprint.name)
-        root_pw = secret_mgr.generate_secret("root_password", 32)
+            # Last resort: ask user to run pveam manually
+            raise RuntimeError(
+                f"Template '{template_name}' not found in storage '{self.config.storage.pool}'.\n"
+                f"Run on your Proxmox host:\n"
+                f"  pveam list {self.config.storage.pool}\n"
+                f"  pveam download {self.config.storage.pool} {template_name}"
+            )
 
         # Compute CIDR using actual subnet prefix
         net = self.config.network.subnet
         prefix = net.prefixlen
 
-        # Create LXC
+        # Create LXC (no root password via API — SSH keys only)
         self.proxmox.create_lxc(
             vmid=state.vmid,
             hostname=blueprint.container.hostname,
@@ -189,14 +224,21 @@ class Orchestrator:
             bridge=blueprint.network.bridge or self.config.network.bridge,
             ip_cidr=f"{state.ip}/{prefix}",
             gateway=str(self.config.network.gateway),
-            password=root_pw,
             dns=" ".join(self.config.network.dns),
             node=state.node,
         )
 
         self.proxmox.start_lxc(state.vmid, state.node)
 
+        # Wait for container to boot (systemd-networkd needs time to start)
+        print("    [INFO] Waiting for container to boot...")
+        if not self.proxmox.wait_for_boot(state.vmid, timeout=120, node=state.node):
+            print(
+                "    [WARN] Container did not signal systemd readiness. Proceeding anyway..."
+            )
+
         # Wait for network
+        print("    [INFO] Waiting for network...")
         if not self.proxmox.wait_for_network(state.vmid, timeout=120, node=state.node):
             raise RuntimeError("Container did not get network connectivity")
 
@@ -223,9 +265,15 @@ class Orchestrator:
         app_priv, app_pub = ssh_mgr.generate_keypair("app")
 
         # Push root public key
-        self.proxmox.exec(state.vmid, "mkdir -p /root/.ssh && chmod 700 /root/.ssh", node=state.node)
-        self.proxmox.push_file(state.vmid, root_pub, "/root/.ssh/authorized_keys", node=state.node)
-        self.proxmox.exec(state.vmid, "chmod 600 /root/.ssh/authorized_keys", node=state.node)
+        self.proxmox.exec(
+            state.vmid, "mkdir -p /root/.ssh && chmod 700 /root/.ssh", node=state.node
+        )
+        self.proxmox.push_file(
+            state.vmid, root_pub, "/root/.ssh/authorized_keys", node=state.node
+        )
+        self.proxmox.exec(
+            state.vmid, "chmod 600 /root/.ssh/authorized_keys", node=state.node
+        )
 
         # Harden sshd
         sshd_config = """Port 22
@@ -246,20 +294,37 @@ Subsystem sftp /usr/lib/openssh/sftp-server
             f"cat > /etc/ssh/sshd_config <<'EOF'\n{sshd_config}EOF",
             node=state.node,
         )
-        self.proxmox.exec(state.vmid, "ssh-keygen -A >/dev/null 2>&1; systemctl restart sshd", node=state.node)
+        self.proxmox.exec(
+            state.vmid,
+            "ssh-keygen -A >/dev/null 2>&1; systemctl restart sshd",
+            node=state.node,
+        )
 
-        # Create app user (for native deployments)
+        # Create app user (for native deployments only)
         if blueprint.deployment.type == "native":
             native = blueprint.deployment.native
             self.proxmox.exec(
                 state.vmid,
-                f"id {native.app_user} >/dev/null 2>&1 || useradd -r -m -d {native.app_dir} -s /bin/bash {native.app_user}",
+                f"id {quote(native.app_user)} >/dev/null 2>&1 || useradd -r -m -d {quote(native.app_dir)} -s /bin/bash {quote(native.app_user)}",
                 node=state.node,
             )
             # Push app user public key
-            self.proxmox.exec(state.vmid, f"mkdir -p /home/{native.app_user}/.ssh && chmod 700 /home/{native.app_user}/.ssh", node=state.node)
-            self.proxmox.push_file(state.vmid, app_pub, f"/home/{native.app_user}/.ssh/authorized_keys", node=state.node)
-            self.proxmox.exec(state.vmid, f"chown -R {native.app_user}:{native.app_user} /home/{native.app_user}/.ssh && chmod 600 /home/{native.app_user}/.ssh/authorized_keys", node=state.node)
+            self.proxmox.exec(
+                state.vmid,
+                f"mkdir -p /home/{quote(native.app_user)}/.ssh && chmod 700 /home/{quote(native.app_user)}/.ssh",
+                node=state.node,
+            )
+            self.proxmox.push_file(
+                state.vmid,
+                app_pub,
+                f"/home/{native.app_user}/.ssh/authorized_keys",
+                node=state.node,
+            )
+            self.proxmox.exec(
+                state.vmid,
+                f"chown -R {quote(native.app_user)}:{quote(native.app_user)} /home/{quote(native.app_user)}/.ssh && chmod 600 /home/{quote(native.app_user)}/.ssh/authorized_keys",
+                node=state.node,
+            )
 
         state.mark_phase_complete(DeploymentPhase.HARDEN)
         self._save_state(state)
@@ -287,6 +352,8 @@ Subsystem sftp /usr/lib/openssh/sftp-server
             self._install_docker(state, blueprint)
         elif blueprint.deployment.type == "native":
             self._install_native_runtime(state, blueprint)
+        elif blueprint.deployment.type == "none":
+            print("    [INFO] No runtime to install (type=none)")
 
         if blueprint.dependencies.get("install_podman"):
             self._install_podman(state, blueprint)
@@ -305,14 +372,20 @@ Subsystem sftp /usr/lib/openssh/sftp-server
             "curl -fsSL https://get.docker.com | sh || true",
             node=state.node,
         )
-        self.proxmox.exec(state.vmid, "systemctl enable docker && systemctl start docker", node=state.node)
+        self.proxmox.exec(
+            state.vmid,
+            "systemctl enable docker && systemctl start docker",
+            node=state.node,
+        )
 
     def _install_native_runtime(self, state: DeploymentState, blueprint: AppBlueprint):
         runtime = blueprint.deployment.runtime
         version = blueprint.deployment.runtime_version
 
         if runtime == "nodejs" and version:
-            result = self.proxmox.exec(state.vmid, f"node --version | grep -q 'v{version}'", node=state.node)
+            result = self.proxmox.exec(
+                state.vmid, f"node --version | grep -q 'v{version}'", node=state.node
+            )
             if result.exit_code == 0:
                 return
 
@@ -326,10 +399,16 @@ Subsystem sftp /usr/lib/openssh/sftp-server
                 "export DEBIAN_FRONTEND=noninteractive; apt-get install -y nodejs",
                 node=state.node,
             )
-            self.proxmox.exec(state.vmid, "corepack enable && corepack prepare pnpm@latest --activate", node=state.node)
+            self.proxmox.exec(
+                state.vmid,
+                "corepack enable && corepack prepare pnpm@latest --activate",
+                node=state.node,
+            )
 
         elif runtime == "python" and version:
-            result = self.proxmox.exec(state.vmid, f"python{version} --version", node=state.node)
+            result = self.proxmox.exec(
+                state.vmid, f"python{version} --version", node=state.node
+            )
             if result.exit_code == 0:
                 return
             self.proxmox.exec(
@@ -399,7 +478,6 @@ Subsystem sftp /usr/lib/openssh/sftp-server
         env = dict(blueprint.environment)
         env.update(state.secrets_resolved)
 
-        # Push templates using the proper nested context
         context = {
             "environment": blueprint.environment,
             "secrets": state.secrets_resolved,
@@ -408,30 +486,52 @@ Subsystem sftp /usr/lib/openssh/sftp-server
             "hostname": blueprint.container.hostname,
             "vmid": state.vmid,
             **state.secrets_resolved,  # flat for backward compat
-            **blueprint.environment,    # flat for backward compat
+            **blueprint.environment,  # flat for backward compat
         }
 
-        for tpl in blueprint.templates:
-            rendered = self.template_engine.render_file(tpl.source, context)
-            local_tmp = Path(f"/tmp/ops_{blueprint.name}_{Path(tpl.dest).name}")
-            local_tmp.write_text(rendered)
-            self.proxmox.push_file(state.vmid, str(local_tmp), tpl.dest, node=state.node)
-            self.proxmox.exec(state.vmid, f"chmod {tpl.mode} {tpl.dest}", node=state.node)
-            if blueprint.deployment.type == "native":
-                self.proxmox.exec(
-                    state.vmid,
-                    f"chown {blueprint.deployment.native.app_user}:{blueprint.deployment.native.app_user} {tpl.dest}",
-                    node=state.node,
-                )
-            local_tmp.unlink()
-
-        # Deploy using strategy
-        if blueprint.deployment.type == "docker":
-            deployer = DockerDeployer()
+        # Push templates + deploy (skip entirely for vanilla containers)
+        if blueprint.deployment.type == "none":
+            print("    [INFO] No app to deploy (type=none)")
         else:
-            deployer = NativeDeployer()
+            for tpl in blueprint.templates:
+                rendered = self.template_engine.render_file(tpl.source, context)
+                local_tmp = Path(f"/tmp/ops_{blueprint.name}_{Path(tpl.dest).name}")
+                local_tmp.write_text(rendered)
+                self.proxmox.push_file(
+                    state.vmid, str(local_tmp), tpl.dest, node=state.node
+                )
+                self.proxmox.exec(
+                    state.vmid, f"chmod {tpl.mode} {tpl.dest}", node=state.node
+                )
+                if blueprint.deployment.type == "native":
+                    self.proxmox.exec(
+                        state.vmid,
+                        f"chown {blueprint.deployment.native.app_user}:{blueprint.deployment.native.app_user} {tpl.dest}",
+                        node=state.node,
+                    )
+                local_tmp.unlink()
 
-        deployer.deploy(self.proxmox, state.node, state.vmid, blueprint, env)
+            # Deploy using strategy
+            if blueprint.deployment.type == "docker":
+                deployer = DockerDeployer()
+                deployer.deploy(self.proxmox, state.node, state.vmid, blueprint, env)
+            elif blueprint.deployment.type == "firecracker":
+                from ops.deployers.firecracker import FirecrackerDeployer
+                from ops.providers.firecracker import FirecrackerProvider
+
+                fc_provider = FirecrackerProvider(
+                    socket_path=f"/tmp/firecracker_{state.vmid}.sock",
+                )
+                deployer = FirecrackerDeployer(fc_provider)
+                deployer.deploy(self.proxmox, state.node, state.vmid, blueprint, env)
+            elif blueprint.deployment.type == "wasm":
+                from ops.deployers.wasm import WasmDeployer
+
+                deployer = WasmDeployer()
+                deployer.deploy(self.proxmox, state.node, state.vmid, blueprint, env)
+            else:
+                deployer = NativeDeployer()
+                deployer.deploy(self.proxmox, state.node, state.vmid, blueprint, env)
 
         state.mark_phase_complete(DeploymentPhase.DEPLOY)
         self._save_state(state)
@@ -445,7 +545,9 @@ Subsystem sftp /usr/lib/openssh/sftp-server
         print("--> [FINALIZE] Running health checks...")
 
         # Health check
-        health_result = self.hb_mgr.run_health_check(blueprint, state.vmid, state.ip, self.proxmox, state.node)
+        health_result = self.hb_mgr.run_health_check(
+            blueprint, state.vmid, state.ip, self.proxmox, state.node
+        )
 
         # Generate SSH key paths for heartbeat
         config_mgr = ConfigManager()
@@ -456,11 +558,13 @@ Subsystem sftp /usr/lib/openssh/sftp-server
             "app": ssh_mgr.get_private_key("app"),
         }
 
-        heartbeat = self.hb_mgr.generate_heartbeat(
+        self.hb_mgr.generate_heartbeat(
             blueprint.name, blueprint, state, health_result, ssh_keys
         )
 
-        if health_result.get("status") != "ok":
+        if health_result.get("status") == "skipped":
+            print("    [INFO] Health check skipped (not enabled)")
+        elif health_result.get("status") != "ok":
             print(f"    [WARN] Health check failed: {health_result.get('error')}")
         else:
             print(f"    [OK] Health check passed: {health_result.get('url')}")
@@ -469,7 +573,7 @@ Subsystem sftp /usr/lib/openssh/sftp-server
         self._save_state(state)
         print("    [OK] Deployment finalized")
 
-    def teardown(self, app_name: str, blueprint: Optional[AppBlueprint] = None, skip_backup: bool = False):
+    def teardown(self, app_name: str, blueprint=None, skip_backup: bool = False):
         state = self._get_state(app_name)
 
         if not state.vmid:
@@ -500,7 +604,7 @@ Subsystem sftp /usr/lib/openssh/sftp-server
 
         print(f"    [OK] {app_name} teardown complete")
 
-    def _backup_before_teardown(self, state: DeploymentState, blueprint: Optional[AppBlueprint]):
+    def _backup_before_teardown(self, state: DeploymentState, blueprint):
         if not blueprint:
             return
         backup_dir = Path("~/.ops/backups").expanduser()
@@ -510,14 +614,22 @@ Subsystem sftp /usr/lib/openssh/sftp-server
         remote_backup_path = f"/tmp/backup_ops_{blueprint.name}_{timestamp}.tar.gz"
 
         if blueprint.deployment.type == "docker":
-            self.proxmox.exec(state.vmid, f"cd /opt/{blueprint.name} && docker compose down", node=state.node)
+            self.proxmox.exec(
+                state.vmid,
+                f"cd /opt/{blueprint.name} && docker compose down",
+                node=state.node,
+            )
             self.proxmox.exec(
                 state.vmid,
                 f"tar czf {remote_backup_path} -C /opt/{blueprint.name} . || true",
                 node=state.node,
             )
         elif blueprint.deployment.type == "native":
-            app_dir = blueprint.deployment.native.app_dir if blueprint.deployment.native else "/opt/app"
+            app_dir = (
+                blueprint.deployment.native.app_dir
+                if blueprint.deployment.native
+                else "/opt/app"
+            )
             self.proxmox.exec(
                 state.vmid,
                 f"tar czf {remote_backup_path} -C {app_dir} . || true",
@@ -526,7 +638,9 @@ Subsystem sftp /usr/lib/openssh/sftp-server
 
         # Pull backup from container
         try:
-            result = self.proxmox.exec(state.vmid, f"cat {remote_backup_path} | base64", node=state.node)
+            result = self.proxmox.exec(
+                state.vmid, f"cat {remote_backup_path} | base64", node=state.node
+            )
             if result.stdout:
                 backup_path.write_bytes(base64.b64decode(result.stdout))
                 print(f"    [OK] Backup saved to {backup_path}")
@@ -543,8 +657,11 @@ Subsystem sftp /usr/lib/openssh/sftp-server
 
         if blueprint.deployment.type == "docker":
             deployer = DockerDeployer()
-        else:
+        elif blueprint.deployment.type == "native":
             deployer = NativeDeployer()
+        else:
+            print("[INFO] No service to restart (type=none)")
+            return
         deployer.restart_service(self.proxmox, state.node, state.vmid, blueprint)
 
     def _sync_secrets_to_state(self, app_name: str, state: DeploymentState):
@@ -554,21 +671,35 @@ Subsystem sftp /usr/lib/openssh/sftp-server
         disk_secrets = secret_mgr.get_all_secrets()
         state.secrets_resolved.update(disk_secrets)
 
-    def get_logs(self, app_name: str, blueprint: AppBlueprint, follow: bool = False, lines: int = 100):
+    def get_logs(
+        self,
+        app_name: str,
+        blueprint: AppBlueprint,
+        follow: bool = False,
+        lines: int = 100,
+    ):
         state = self._get_state(app_name)
         if not state.vmid:
             raise RuntimeError(f"No container found for {app_name}")
 
         if blueprint.deployment.type == "docker":
             deployer = DockerDeployer()
-        else:
+        elif blueprint.deployment.type == "native":
             deployer = NativeDeployer()
-        return deployer.get_logs(self.proxmox, state.node, state.vmid, blueprint, follow, lines)
+        else:
+            return "No logs available for vanilla containers"
+        return deployer.get_logs(
+            self.proxmox, state.node, state.vmid, blueprint, follow, lines
+        )
 
     def sync(self, app_name: str, blueprint: AppBlueprint):
         state = self._get_state(app_name)
         if not state.vmid:
             raise RuntimeError(f"No container found for {app_name}")
+
+        if blueprint.deployment.type == "none":
+            print("[INFO] Nothing to sync for vanilla containers")
+            return
 
         print(f"--> [SYNC] Updating {app_name}...")
 
@@ -593,7 +724,9 @@ Subsystem sftp /usr/lib/openssh/sftp-server
             rendered = self.template_engine.render_file(tpl.source, context)
             local_tmp = Path(f"/tmp/ops_{blueprint.name}_{Path(tpl.dest).name}")
             local_tmp.write_text(rendered)
-            self.proxmox.push_file(state.vmid, str(local_tmp), tpl.dest, node=state.node)
+            self.proxmox.push_file(
+                state.vmid, str(local_tmp), tpl.dest, node=state.node
+            )
             local_tmp.unlink()
 
         # Restart service
