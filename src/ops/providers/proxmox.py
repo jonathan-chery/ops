@@ -1,6 +1,7 @@
 import base64
 import time
-from typing import List, Optional, Dict, Any
+import subprocess
+from typing import List, Optional, Dict, Any, Tuple
 
 from proxmoxer import ProxmoxAPI
 
@@ -97,6 +98,26 @@ class ProxmoxProvider:
                 f"Cannot download template '{template_filename}'. Please download manually:\n"
                 f"  pveam download {storage}:vztmpl {template_filename}"
             )
+
+    def resolve_template_volid(self, template_name: str, storage: str = "local", node: Optional[str] = None) -> Optional[str]:
+        """Try to resolve a template name to a full volid."""
+        node = node or self._get_node()
+        # Try exact match first
+        available = self.get_available_templates(storage, node)
+        for volid in available:
+            if template_name in volid:
+                return volid
+        return None
+
+    def wait_for_boot(self, vmid: int, timeout: int = 120, node: Optional[str] = None) -> bool:
+        """Poll container until systemd signals readiness."""
+        node = node or self._get_node()
+        for _ in range(timeout // 2):
+            result = self.exec(vmid, "systemctl is-system-running >/dev/null 2>&1 && echo OK", node=node)
+            if "OK" in result.stdout:
+                return True
+            time.sleep(2)
+        return False
 
     def create_lxc(
         self,
@@ -262,3 +283,37 @@ class ProxmoxProvider:
             if ip:
                 ips.append(ip)
         return ips
+
+    def patch_lxc_config(
+        self,
+        vmid: int,
+        lines: Dict[str, str],
+        node: Optional[str] = None,
+    ) -> None:
+        """Append raw key/value lines to /etc/pve/lxc/<vmid>.conf.
+
+        Used to inject device passthrough rules (e.g. /dev/kvm) into LXC
+        containers.  The remote helper script uses a simple append; callers
+        should ensure idempotency where required.
+        """
+        node = node or self._get_node()
+        config_path = f"/etc/pve/lxc/{vmid}.conf"
+        for key, value in lines.items():
+            line = f"{key}: {value}"
+            quoted_line = line.replace("'", "'\"'\"'")
+            cmd = f"grep -qFx '{quoted_line}' {config_path} || echo '{quoted_line}' >> {config_path}"
+            self.exec(vmid, cmd, "root", node)
+
+    def get_lxc_config(self, vmid: int, node: Optional[str] = None) -> Dict[str, str]:
+        """Read raw config lines from /etc/pve/lxc/<vmid>.conf.
+
+        Returns a dict of key:value for keys that use the colon syntax.
+        """
+        node = node or self._get_node()
+        result = self.exec(vmid, f"cat /etc/pve/lxc/{vmid}.conf", "root", node)
+        out: Dict[str, str] = {}
+        for line in result.stdout.strip().splitlines():
+            if ":" in line and not line.startswith("#"):
+                key, value = line.split(":", 1)
+                out[key.strip()] = value.strip()
+        return out

@@ -2,7 +2,7 @@ from typing import List, Dict, Optional, Literal, Any
 from ipaddress import IPv4Address
 from pydantic import BaseModel, Field, field_validator
 
-BLUEPRINT_SCHEMA_VERSION = "1.1"
+BLUEPRINT_SCHEMA_VERSION = "1.2"
 
 
 class ResourceConfig(BaseModel):
@@ -24,6 +24,16 @@ class BlueprintNetworkConfig(BaseModel):
     bridge: Optional[str] = None
 
 
+class LxcMountConfig(BaseModel):
+    """Raw LXC config passthrough entry.
+
+    Injected into /etc/pve/lxc/<vmid>.conf after container creation.
+    Only used when `deployment.type == 'firecracker'` with `backend='lxc'`.
+    """
+    key: str
+    value: str
+
+
 class BuildStep(BaseModel):
     cmd: str
     user: Optional[str] = None
@@ -33,15 +43,20 @@ class BuildStep(BaseModel):
 class FirecrackerDeploymentConfig(BaseModel):
     """MicroVM deployment using Firecracker.
 
-    Migration path: version 1.0 blueprints do not include this block.
-    Add under `deployment.firecracker` when upgrading to schema 1.1.
+    Migration path: version 1.1 did not have `backend`, `image`, or
+    `firecracker_version`. The `backend` defaults to `pve-microvm` so
+    existing blueprints that rely on node-level packages continue to work,
+    while new blueprints can opt into `lxc` nested mode.
     """
 
-    kernel_path: str
+    backend: Literal["pve-microvm", "lxc"] = "pve-microvm"
+    kernel_path: str = ""
     rootfs_path: Optional[str] = None
     rootfs_size_mb: int = 512
     rootfs_source: Literal["built-in", "pre-built"] = "built-in"
     network_mode: Literal["nat", "bridge"] = "nat"
+    image: str = ""  # OCI image or pre-built rootfs path for pve-microvm
+    firecracker_version: str = "latest"  # Version to download in lxc mode (A1)
 
 
 class WasmDeploymentConfig(BaseModel):
@@ -169,9 +184,10 @@ class AppBlueprint(BaseModel):
     @field_validator("version")
     @classmethod
     def validate_version(cls, v):
-        if v != BLUEPRINT_SCHEMA_VERSION:
+        supported = {BLUEPRINT_SCHEMA_VERSION, "1.1"}
+        if v not in supported:
             raise ValueError(
                 f"Blueprint version {v} is not supported. "
-                f"Supported version: {BLUEPRINT_SCHEMA_VERSION}"
+                f"Supported versions: {', '.join(sorted(supported))}"
             )
         return v

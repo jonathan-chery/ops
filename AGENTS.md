@@ -23,12 +23,19 @@ You are an expert Python Systems/Infrastructure Engineer. You maintain a clean, 
 ## Architecture
 - **`src/ops/models/`** — Pydantic contracts (blueprints, config, state, container status, secrets, cluster)
 - **`src/ops/core/`** — Orchestrator engine and managers (config, state, heartbeat, audit, blueprint)
-- **`src/ops/providers/`** — External system integrations (ProxmoxProvider, DatabaseProvider, InfisicalProvider, FirecrackerProvider, WasmProvider)
-- **`src/ops/deployers/`** — Deployment strategy pattern (`BaseDeployer` → `DockerDeployer`, `NativeDeployer`, `FirecrackerDeployer`, `WasmDeployer`)
+- **`src/ops/providers/`** — External system integrations (ProxmoxProvider, DatabaseProvider, InfisicalProvider, FirecrackerProvider, MicroVMProvider, WasmProvider)
+- **`src/ops/deployers/`** — Deployment strategy pattern (`BaseDeployer` → `DockerDeployer`, `NativeDeployer`, `FirecrackerDeployer`, `MicroVMDeployer`, `NestedFirecrackerDeployer`, `WasmDeployer`)
 - **`src/ops/cluster/`** — Auto-discovery, node registry, and pluggable cluster transport (SSH default, HTTPS opt-in)
 - **`src/ops/utils/`** — Security helpers (`SecretManager`, `SSHKeyManager`, `TemplateEngine`, `safe_shell` quoting, `RootfsBuilder`, `WasmBuildToolchain`, `FirecrackerNetworkManager`)
 - **`src/ops/cli.py`** — Single-file command dispatch surface
 - **`src/ops/blueprints/`** — Built-in YAML blueprints and `.tpl` Jinja2 templates
+
+### MicroVM / Firecracker Architecture
+The blueprint schema version `1.2` introduces `deployment.type == "firecracker"` with two backends:
+- **`pve-microvm`** (default): Uses `MicroVMProvider` to create QEMU microVMs natively on the Proxmox node via `pve-microvm-template` and `qm clone`. Skips LXC provisioning entirely.
+- **`lxc`** (fallback): Provisions a standard LXC container, injects `/dev/kvm` passthrough via `ProxmoxProvider.patch_lxc_config`, then runs the Firecracker binary inside the container via `NestedFirecrackerDeployer`.
+
+Backend detection happens in `_phase_preflight()` and is cached in `DeploymentState.backend` so redeploys skip the probe.
 
 ## Coding Standards
 - **Naming:** Use `snake_case` for variables, functions, and modules. Use `PascalCase` for classes and Pydantic models. Files match module names (`snake_case.py`).
@@ -74,6 +81,13 @@ You are an expert Python Systems/Infrastructure Engineer. You maintain a clean, 
   2. Ensure the pipeline (lint + tests + type checks) passes.
   3. Request review and wait for approval.
   4. Merge only when both pipeline status is green **and** the MR is explicitly approved.
+- **AI Agent MR Workflow (when explicitly requested by user):**
+  1. Push the feature branch to the GitLab remote.
+  2. Create the MR via GitLab CLI (`glab`) with a descriptive title and summary.
+  3. Monitor the CI/CD pipeline until it completes.
+  4. If the pipeline fails, report failures to the user and do NOT approve.
+  5. If the pipeline is green, approve the MR on behalf of the agent.
+  6. **Handoff:** Notify the user that the MR is approved and ready for them to click the final merge button. NEVER click merge yourself.
 
 ## Documentation Rules
 - Every new exported function or method must have a module-level docstring, preferably in PEP 257 style.

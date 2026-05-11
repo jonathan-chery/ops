@@ -9,6 +9,7 @@ from ops.models.config import OpsConfig
 from ops.providers.proxmox import ProxmoxProvider
 from ops.providers.database import DatabaseProvider
 from ops.providers.infisical import InfisicalProvider
+from ops.providers.microvm import MicroVMProvider
 from ops.utils.secrets import SecretManager
 from ops.utils.network import IPAllocator
 from ops.utils.ssh import SSHKeyManager
@@ -20,6 +21,8 @@ from ops.core.heartbeat import HeartbeatManager
 from ops.core.audit import AuditLogger
 from ops.deployers.docker import DockerDeployer
 from ops.deployers.native import NativeDeployer
+from ops.deployers.microvm import MicroVMDeployer
+from ops.deployers.nested_firecracker import NestedFirecrackerDeployer
 
 
 class Orchestrator:
@@ -44,6 +47,8 @@ class Orchestrator:
         self.template_engine = TemplateEngine()
         self.audit = AuditLogger()
         self._host_name = host_config.name
+        self._host_config = host_config
+        self._microvm_provider: Optional[MicroVMProvider] = None
 
     def _audit_start(self, command: str, vmid: Optional[int] = None, details: str = ""):
         self.audit.log(
@@ -89,6 +94,77 @@ class Orchestrator:
                 secrets[cfg.name] = sv.value
 
         return secrets
+
+    def _get_ssh_key_manager(self, blueprint: AppBlueprint) -> SSHKeyManager:
+        config_mgr = ConfigManager()
+        secret_mgr = SecretManager(config_mgr, blueprint.name)
+        return SSHKeyManager(secret_mgr.secrets_dir)
+
+    # -- Firecracker backend resolution ---------------------------------------
+
+    def _is_firecracker_microvm(self, state: DeploymentState, blueprint: AppBlueprint) -> bool:
+        """Return True if this deployment uses the pve-microvm backend."""
+        if blueprint.deployment.type != "firecracker":
+            return False
+        return state.backend == "pve-microvm"
+
+    def _is_firecracker_lxc(self, state: DeploymentState, blueprint: AppBlueprint) -> bool:
+        """Return True if this deployment uses nested Firecracker inside LXC."""
+        if blueprint.deployment.type != "firecracker":
+            return False
+        return state.backend == "lxc"
+
+    def _resolve_firecracker_backend(
+        self, state: DeploymentState, blueprint: AppBlueprint
+    ) -> None:
+        """Probe the target node for pve-microvm availability and cache it."""
+        if state.backend:
+            print(f"    [INFO] Using cached Firecracker backend: {state.backend}")
+            return
+
+        # Default to pve-microvm
+        backend = "lxc"
+        if blueprint.deployment.firecracker:
+            backend = blueprint.deployment.firecracker.backend
+
+        # If blueprint explicitly chooses lxc, respect it without probing
+        if backend == "lxc":
+            state.backend = "lxc"
+            print("    [INFO] Firecracker backend: lxc (configured in blueprint)")
+            return
+
+        # Probe node for pve-microvm
+        print("    [INFO] Probing target node for pve-microvm...")
+        ssh_mgr = self._get_ssh_key_manager(blueprint)
+        try:
+            client = ssh_mgr.ssh_client(
+                "root", self._host_config.host, self._host_config.user, self._host_config.port
+            )
+            client.close()
+            # If we can connect, create a MicroVMProvider and check
+            microvm = self._microvm_provider_for(blueprint)
+            if microvm.is_available():
+                state.backend = "pve-microvm"
+                print("    [OK] pve-microvm detected on node")
+            else:
+                state.backend = "lxc"
+                print("    [WARN] pve-microvm not found; falling back to lxc nested mode")
+        except Exception as e:
+            state.backend = "lxc"
+            print(f"    [WARN] SSH probe failed ({e}); falling back to lxc nested mode")
+
+    def _microvm_provider_for(self, blueprint: AppBlueprint) -> MicroVMProvider:
+        """Return a cached MicroVMProvider for the target node."""
+        if self._microvm_provider is None:
+            ssh_mgr = self._get_ssh_key_manager(blueprint)
+            private_key = ssh_mgr.get_private_key("root")
+            self._microvm_provider = MicroVMProvider(
+                hostname=self._host_config.host,
+                username=self._host_config.user,
+                port=self._host_config.port,
+                private_key_path=private_key,
+            )
+        return self._microvm_provider
 
     def deploy(
         self,
@@ -183,6 +259,10 @@ class Orchestrator:
         secrets = self._resolve_secrets(blueprint.name, blueprint)
         state.secrets_resolved = secrets
 
+        # Firecracker backend probe
+        if blueprint.deployment.type == "firecracker":
+            self._resolve_firecracker_backend(state, blueprint)
+
         state.mark_phase_complete(DeploymentPhase.PREFLIGHT)
         self._save_state(state)
         print(f"    [OK] VMID={vmid}, IP={ip}")
@@ -190,6 +270,14 @@ class Orchestrator:
     def _phase_provision(self, state: DeploymentState, blueprint: AppBlueprint):
         if state.is_phase_complete(DeploymentPhase.PROVISION):
             print("[SKIP] Provision already complete")
+            return
+
+        # pve-microvm path: skip LXC provisioning entirely
+        if self._is_firecracker_microvm(state, blueprint):
+            print("--> [PROVISION] Skipping LXC provision (microVM backend)")
+            state.mark_phase_complete(DeploymentPhase.PROVISION)
+            self._save_state(state)
+            print(f"    [OK] MicroVM backend — no LXC container needed")
             return
 
         print("--> [PROVISION] Creating LXC container...")
@@ -228,6 +316,18 @@ class Orchestrator:
             node=state.node,
         )
 
+        # If nested Firecracker, inject raw LXC config for /dev/kvm passthrough
+        if self._is_firecracker_lxc(state, blueprint):
+            print("    [INFO] Injecting LXC config for /dev/kvm passthrough...")
+            self.proxmox.patch_lxc_config(
+                state.vmid,
+                {
+                    "lxc.cgroup2.devices.allow": "c 10:232 rwm",
+                    "lxc.mount.entry": "/dev/kvm dev/kvm none bind,optional,create=file",
+                },
+                node=state.node,
+            )
+
         self.proxmox.start_lxc(state.vmid, state.node)
 
         # Wait for container to boot (systemd-networkd needs time to start)
@@ -252,6 +352,13 @@ class Orchestrator:
     def _phase_harden(self, state: DeploymentState, blueprint: AppBlueprint):
         if state.is_phase_complete(DeploymentPhase.HARDEN):
             print("[SKIP] Harden already complete")
+            return
+
+        # pve-microvm path: skip hardening (microVMs are immutable guests)
+        if self._is_firecracker_microvm(state, blueprint):
+            print("--> [HARDEN] Skipping (microVM backend)")
+            state.mark_phase_complete(DeploymentPhase.HARDEN)
+            self._save_state(state)
             return
 
         print("--> [HARDEN] Securing container...")
@@ -322,7 +429,7 @@ Subsystem sftp /usr/lib/openssh/sftp-server
             )
             self.proxmox.exec(
                 state.vmid,
-                f"chown -R {quote(native.app_user)}:{quote(native.app_user)} /home/{quote(native.app_user)}/.ssh && chmod 600 /home/{quote(native.app_user)}/.ssh/authorized_keys",
+                f"chown -R {quote(native.app_user)}:{quote(native.app_user)} /home/{quote(native.app_user)}/.ssh && chmod 600 /home/{native.app_user}/.ssh/authorized_keys",
                 node=state.node,
             )
 
@@ -333,6 +440,13 @@ Subsystem sftp /usr/lib/openssh/sftp-server
     def _phase_install(self, state: DeploymentState, blueprint: AppBlueprint):
         if state.is_phase_complete(DeploymentPhase.INSTALL):
             print("[SKIP] Install already complete")
+            return
+
+        # pve-microvm path: skip install (image is baked into template)
+        if self._is_firecracker_microvm(state, blueprint):
+            print("--> [INSTALL] Skipping (microVM backend)")
+            state.mark_phase_complete(DeploymentPhase.INSTALL)
+            self._save_state(state)
             return
 
         print("--> [INSTALL] Installing dependencies...")
@@ -489,10 +603,32 @@ Subsystem sftp /usr/lib/openssh/sftp-server
             **blueprint.environment,  # flat for backward compat
         }
 
-        # Push templates + deploy (skip entirely for vanilla containers)
+        # Push templates + deploy (skip for microVM and vanilla)
         if blueprint.deployment.type == "none":
             print("    [INFO] No app to deploy (type=none)")
+        elif self._is_firecracker_microvm(state, blueprint):
+            # MicroVM path: no templates; deploy via MicroVMDeployer
+            microvm = self._microvm_provider_for(blueprint)
+            deployer = MicroVMDeployer(microvm)
+            deployer.deploy(self.proxmox, state.node, state.vmid, blueprint, env)
+        elif self._is_firecracker_lxc(state, blueprint):
+            # Nested Firecracker path: push templates into LXC
+            for tpl in blueprint.templates:
+                rendered = self.template_engine.render_file(tpl.source, context)
+                local_tmp = Path(f"/tmp/ops_{blueprint.name}_{Path(tpl.dest).name}")
+                local_tmp.write_text(rendered)
+                self.proxmox.push_file(
+                    state.vmid, str(local_tmp), tpl.dest, node=state.node
+                )
+                self.proxmox.exec(
+                    state.vmid, f"chmod {tpl.mode} {tpl.dest}", node=state.node
+                )
+                local_tmp.unlink()
+            # Deploy nested Firecracker
+            deployer = NestedFirecrackerDeployer()
+            deployer.deploy(self.proxmox, state.node, state.vmid, blueprint, env)
         else:
+            # Standard LXC paths (docker, native, wasm)
             for tpl in blueprint.templates:
                 rendered = self.template_engine.render_file(tpl.source, context)
                 local_tmp = Path(f"/tmp/ops_{blueprint.name}_{Path(tpl.dest).name}")
@@ -514,15 +650,6 @@ Subsystem sftp /usr/lib/openssh/sftp-server
             # Deploy using strategy
             if blueprint.deployment.type == "docker":
                 deployer = DockerDeployer()
-                deployer.deploy(self.proxmox, state.node, state.vmid, blueprint, env)
-            elif blueprint.deployment.type == "firecracker":
-                from ops.deployers.firecracker import FirecrackerDeployer
-                from ops.providers.firecracker import FirecrackerProvider
-
-                fc_provider = FirecrackerProvider(
-                    socket_path=f"/tmp/firecracker_{state.vmid}.sock",
-                )
-                deployer = FirecrackerDeployer(fc_provider)
                 deployer.deploy(self.proxmox, state.node, state.vmid, blueprint, env)
             elif blueprint.deployment.type == "wasm":
                 from ops.deployers.wasm import WasmDeployer
@@ -588,9 +715,19 @@ Subsystem sftp /usr/lib/openssh/sftp-server
 
         # Stop and destroy
         try:
-            self.proxmox.stop_lxc(state.vmid, state.node)
-            time.sleep(3)
-            self.proxmox.destroy_lxc(state.vmid, state.node)
+            if blueprint and blueprint.deployment.type == "firecracker":
+                if state.backend == "pve-microvm":
+                    microvm = self._microvm_provider_for(blueprint)
+                    microvm.stop_vm(state.vmid)
+                    microvm.destroy_vm(state.vmid)
+                else:
+                    self.proxmox.stop_lxc(state.vmid, state.node)
+                    time.sleep(3)
+                    self.proxmox.destroy_lxc(state.vmid, state.node)
+            else:
+                self.proxmox.stop_lxc(state.vmid, state.node)
+                time.sleep(3)
+                self.proxmox.destroy_lxc(state.vmid, state.node)
         except Exception as e:
             print(f"    [WARN] Error during destroy: {e}")
 
@@ -655,6 +792,17 @@ Subsystem sftp /usr/lib/openssh/sftp-server
         # Sync secrets back to state before restart
         self._sync_secrets_to_state(app_name, state)
 
+        if blueprint.deployment.type == "firecracker":
+            if state.backend == "pve-microvm":
+                microvm = self._microvm_provider_for(blueprint)
+                deployer = MicroVMDeployer(microvm)
+                deployer.restart_service(self.proxmox, state.node, state.vmid, blueprint)
+                return
+            elif state.backend == "lxc":
+                deployer = NestedFirecrackerDeployer()
+                deployer.restart_service(self.proxmox, state.node, state.vmid, blueprint)
+                return
+
         if blueprint.deployment.type == "docker":
             deployer = DockerDeployer()
         elif blueprint.deployment.type == "native":
@@ -682,6 +830,19 @@ Subsystem sftp /usr/lib/openssh/sftp-server
         if not state.vmid:
             raise RuntimeError(f"No container found for {app_name}")
 
+        if blueprint.deployment.type == "firecracker":
+            if state.backend == "pve-microvm":
+                microvm = self._microvm_provider_for(blueprint)
+                deployer = MicroVMDeployer(microvm)
+                return deployer.get_logs(
+                    self.proxmox, state.node, state.vmid, blueprint, follow, lines
+                )
+            elif state.backend == "lxc":
+                deployer = NestedFirecrackerDeployer()
+                return deployer.get_logs(
+                    self.proxmox, state.node, state.vmid, blueprint, follow, lines
+                )
+
         if blueprint.deployment.type == "docker":
             deployer = DockerDeployer()
         elif blueprint.deployment.type == "native":
@@ -699,6 +860,11 @@ Subsystem sftp /usr/lib/openssh/sftp-server
 
         if blueprint.deployment.type == "none":
             print("[INFO] Nothing to sync for vanilla containers")
+            return
+
+        # MicroVMs are immutable; sync is not applicable
+        if self._is_firecracker_microvm(state, blueprint):
+            print("[WARN] Sync is not supported for microVM deployments (immutable guest)")
             return
 
         print(f"--> [SYNC] Updating {app_name}...")

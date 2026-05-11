@@ -21,6 +21,7 @@ class DeploymentState(BaseModel):
     vmid: Optional[int] = None
     ip: Optional[str] = None
     node: Optional[str] = None
+    backend: Optional[str] = None  # Cached firecracker backend (microvm or lxc)
     secrets_resolved: Dict[str, str] = Field(default_factory=dict)
     errors: List[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=datetime.utcnow)
