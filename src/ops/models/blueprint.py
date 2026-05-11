@@ -2,8 +2,7 @@ from typing import List, Dict, Optional, Literal, Any
 from ipaddress import IPv4Address
 from pydantic import BaseModel, Field, field_validator
 
-
-BLUEPRINT_SCHEMA_VERSION = "1.0"
+BLUEPRINT_SCHEMA_VERSION = "1.1"
 
 
 class ResourceConfig(BaseModel):
@@ -31,6 +30,33 @@ class BuildStep(BaseModel):
     env: Dict[str, str] = Field(default_factory=dict)
 
 
+class FirecrackerDeploymentConfig(BaseModel):
+    """MicroVM deployment using Firecracker.
+
+    Migration path: version 1.0 blueprints do not include this block.
+    Add under `deployment.firecracker` when upgrading to schema 1.1.
+    """
+
+    kernel_path: str
+    rootfs_path: Optional[str] = None
+    rootfs_size_mb: int = 512
+    rootfs_source: Literal["built-in", "pre-built"] = "built-in"
+    network_mode: Literal["nat", "bridge"] = "nat"
+
+
+class WasmDeploymentConfig(BaseModel):
+    """WebAssembly deployment using wasmtime.
+
+    Migration path: version 1.0 blueprints do not include this block.
+    Add under `deployment.wasm` when upgrading to schema 1.1.
+    """
+
+    artifact: str
+    wasi_dirs: List[str] = Field(default_factory=list)
+    wasi_network: bool = False
+    runtime: Literal["rust", "go", "python", "node"] = "rust"
+
+
 class NativeDeploymentConfig(BaseModel):
     git_repo: Optional[str] = None
     tag: Optional[str] = None
@@ -49,11 +75,13 @@ class DockerDeploymentConfig(BaseModel):
 
 
 class DeploymentConfig(BaseModel):
-    type: Literal["native", "docker"] = "docker"
+    type: Literal["none", "native", "docker", "firecracker", "wasm"] = "docker"
     runtime: Optional[str] = None  # nodejs, python
     runtime_version: Optional[int] = None
     native: Optional[NativeDeploymentConfig] = None
     docker: Optional[DockerDeploymentConfig] = None
+    firecracker: Optional[FirecrackerDeploymentConfig] = None
+    wasm: Optional[WasmDeploymentConfig] = None
 
     @field_validator("native", mode="before")
     @classmethod
@@ -69,6 +97,28 @@ class DeploymentConfig(BaseModel):
         data = info.data
         if data.get("type") == "docker" and v is None:
             return DockerDeploymentConfig()
+        return v
+
+    @field_validator("firecracker", mode="before")
+    @classmethod
+    def validate_firecracker(cls, v, info):
+        data = info.data
+        if data.get("type") == "firecracker" and v is None:
+            return FirecrackerDeploymentConfig(kernel_path="")
+        return v
+
+    @field_validator("wasm", mode="before")
+    @classmethod
+    def validate_wasm(cls, v, info):
+        data = info.data
+        if data.get("type") == "wasm" and v is None:
+            return WasmDeploymentConfig(artifact="")
+        return v
+
+    @field_validator("type")
+    @classmethod
+    def validate_type(cls, v):
+        # Allow any valid deployment type
         return v
 
 

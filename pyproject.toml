@@ -7,6 +7,7 @@ dependencies = [
     "pydantic",
     "proxmoxer",
     "requests",
+    "requests-unixsocket",
     "pyyaml",
     "infisicalsdk",
     "paramiko",
@@ -14,6 +15,7 @@ dependencies = [
     "keyring",
     "jinja2",
     "psycopg2-binary",
+    "zeroconf",
 ]
 
 [project.optional-dependencies]
