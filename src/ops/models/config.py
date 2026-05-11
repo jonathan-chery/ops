@@ -2,14 +2,7 @@ from typing import List, Optional
 from ipaddress import IPv4Address, IPv4Network
 from pydantic import BaseModel, Field, field_validator
 
-
-class ProxmoxConfig(BaseModel):
-    host: str = "pve.local"
-    user: str = "root"
-    token_name: str = "ops-token"
-    token_value: str = "placeholder"
-    verify_ssl: bool = False
-    node: Optional[str] = None
+from ops.models.cluster import ClusterConfig
 
 
 class NetworkConfig(BaseModel):
@@ -54,10 +47,79 @@ class DefaultsConfig(BaseModel):
     auto_teardown_on_failure: bool = True
 
 
+class HostConfig(BaseModel):
+    """Generic onboarded host configuration. Supports multiple host types."""
+
+    name: str
+    type: str = "proxmox"
+    host: str
+    port: int = 22
+    user: str = "root"
+    password: Optional[str] = None
+    ssh_onboarded: bool = False
+
+
+class ProxmoxHostConfig(HostConfig):
+    """Proxmox-specific host configuration."""
+
+    type: str = "proxmox"
+    token_name: str = "ops-token"
+    token_value: str = "placeholder"
+    verify_ssl: bool = True
+    node: Optional[str] = None
+
+    @field_validator("type")
+    @classmethod
+    def _validate_type(cls, v):
+        if v != "proxmox":
+            raise ValueError("ProxmoxHostConfig type must be 'proxmox'")
+        return v
+
+    @field_validator("host")
+    @classmethod
+    def _validate_host(cls, v):
+        """Reject shell metacharacters in host string."""
+        bad = set(";|\u0026$`'\"\n\r\u003c\u003e")
+        if any(c in v for c in bad):
+            raise ValueError(f"Host contains forbidden characters: {v}")
+        return v
+
+    @field_validator("verify_ssl", mode="after")
+    @classmethod
+    def _warn_insecure(cls, v):
+        if not v:
+            import warnings
+
+            warnings.warn(
+                "WARNING: TLS verification disabled for Proxmox API. "
+                "MITM attacks are possible. Set verify_ssl=true in config.",
+                stacklevel=2,
+            )
+        return v
+
+
+class ProxmoxConfig(BaseModel):
+    """Legacy single-host Proxmox config. Deprecated -- retained for migration."""
+
+    host: str = "pve.local"
+    user: str = "root"
+    token_name: str = "ops-token"
+    token_value: str = "placeholder"
+    verify_ssl: bool = False
+    node: Optional[str] = None
+
+
 class OpsConfig(BaseModel):
-    proxmox: ProxmoxConfig = Field(default_factory=ProxmoxConfig)
+    """Top-level ops configuration supporting multiple hosts and clustering."""
+
+    hosts: List[ProxmoxHostConfig] = Field(default_factory=list)
     network: NetworkConfig = Field(default_factory=NetworkConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     infisical: InfisicalConfig = Field(default_factory=InfisicalConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     defaults: DefaultsConfig = Field(default_factory=DefaultsConfig)
+    cluster: ClusterConfig = Field(default_factory=ClusterConfig)
+
+    # Backwards-compatibility: if hosts is empty, ConfigManager auto-migrates
+    # the legacy flat `proxmox:` block into hosts[0].
+    proxmox: Optional[ProxmoxConfig] = None
