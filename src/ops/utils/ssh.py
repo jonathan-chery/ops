@@ -103,7 +103,7 @@ class SSHOnboardManager:
         # Install public key into authorized_keys
         commands = [
             "mkdir -p ~/.ssh",
-            f"chmod 700 ~/.ssh",
+            "chmod 700 ~/.ssh",
             f"echo '{public_key}' >> ~/.ssh/authorized_keys",
             "chmod 600 ~/.ssh/authorized_keys",
         ]
