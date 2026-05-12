@@ -20,7 +20,13 @@ class TemplateEngine:
         content = path.read_text()
         return self.render_string(content, context)
 
-    def render_to_file(self, template_path: str, output_path: str, context: Dict[str, Any], mode: str = "600"):
+    def render_to_file(
+        self,
+        template_path: str,
+        output_path: str,
+        context: Dict[str, Any],
+        mode: str = "600",
+    ):
         rendered = self.render_file(template_path, context)
         out = Path(output_path)
         out.parent.mkdir(parents=True, exist_ok=True)

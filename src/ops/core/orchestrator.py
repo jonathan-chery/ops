@@ -102,13 +102,17 @@ class Orchestrator:
 
     # -- Firecracker backend resolution ---------------------------------------
 
-    def _is_firecracker_microvm(self, state: DeploymentState, blueprint: AppBlueprint) -> bool:
+    def _is_firecracker_microvm(
+        self, state: DeploymentState, blueprint: AppBlueprint
+    ) -> bool:
         """Return True if this deployment uses the pve-microvm backend."""
         if blueprint.deployment.type != "firecracker":
             return False
         return state.backend == "pve-microvm"
 
-    def _is_firecracker_lxc(self, state: DeploymentState, blueprint: AppBlueprint) -> bool:
+    def _is_firecracker_lxc(
+        self, state: DeploymentState, blueprint: AppBlueprint
+    ) -> bool:
         """Return True if this deployment uses nested Firecracker inside LXC."""
         if blueprint.deployment.type != "firecracker":
             return False
@@ -138,7 +142,10 @@ class Orchestrator:
         ssh_mgr = self._get_ssh_key_manager(blueprint)
         try:
             client = ssh_mgr.ssh_client(
-                "root", self._host_config.host, self._host_config.user, self._host_config.port
+                "root",
+                self._host_config.host,
+                self._host_config.user,
+                self._host_config.port,
             )
             client.close()
             # If we can connect, create a MicroVMProvider and check
@@ -148,7 +155,9 @@ class Orchestrator:
                 print("    [OK] pve-microvm detected on node")
             else:
                 state.backend = "lxc"
-                print("    [WARN] pve-microvm not found; falling back to lxc nested mode")
+                print(
+                    "    [WARN] pve-microvm not found; falling back to lxc nested mode"
+                )
         except Exception as e:
             state.backend = "lxc"
             print(f"    [WARN] SSH probe failed ({e}); falling back to lxc nested mode")
@@ -796,11 +805,15 @@ Subsystem sftp /usr/lib/openssh/sftp-server
             if state.backend == "pve-microvm":
                 microvm = self._microvm_provider_for(blueprint)
                 deployer = MicroVMDeployer(microvm)
-                deployer.restart_service(self.proxmox, state.node, state.vmid, blueprint)
+                deployer.restart_service(
+                    self.proxmox, state.node, state.vmid, blueprint
+                )
                 return
             elif state.backend == "lxc":
                 deployer = NestedFirecrackerDeployer()
-                deployer.restart_service(self.proxmox, state.node, state.vmid, blueprint)
+                deployer.restart_service(
+                    self.proxmox, state.node, state.vmid, blueprint
+                )
                 return
 
         if blueprint.deployment.type == "docker":
@@ -864,7 +877,9 @@ Subsystem sftp /usr/lib/openssh/sftp-server
 
         # MicroVMs are immutable; sync is not applicable
         if self._is_firecracker_microvm(state, blueprint):
-            print("[WARN] Sync is not supported for microVM deployments (immutable guest)")
+            print(
+                "[WARN] Sync is not supported for microVM deployments (immutable guest)"
+            )
             return
 
         print(f"--> [SYNC] Updating {app_name}...")

@@ -56,7 +56,9 @@ class ProxmoxProvider:
             )
         return containers
 
-    def get_container(self, vmid: int, node: Optional[str] = None) -> Optional[ContainerStatus]:
+    def get_container(
+        self, vmid: int, node: Optional[str] = None
+    ) -> Optional[ContainerStatus]:
         node = node or self._get_node()
         try:
             ct = self.api.nodes(node).lxc(vmid).status.current.get()
@@ -71,15 +73,21 @@ class ProxmoxProvider:
         except Exception:
             return None
 
-    def get_available_templates(self, storage: str = "local", node: Optional[str] = None) -> List[str]:
+    def get_available_templates(
+        self, storage: str = "local", node: Optional[str] = None
+    ) -> List[str]:
         node = node or self._get_node()
         try:
-            templates = self.api.nodes(node).storage(storage).content.get(content="vztmpl")
+            templates = (
+                self.api.nodes(node).storage(storage).content.get(content="vztmpl")
+            )
             return [t["volid"] for t in templates]
         except Exception:
             return []
 
-    def download_template(self, storage: str = "local", node: Optional[str] = None) -> None:
+    def download_template(
+        self, storage: str = "local", node: Optional[str] = None
+    ) -> None:
         """Download the default Ubuntu 24.04 template from Proxmox template repo."""
         node = node or self._get_node()
         # Try the standard Ubuntu 24.04 template name
@@ -98,7 +106,9 @@ class ProxmoxProvider:
                 f"  pveam download {storage}:vztmpl {template_filename}"
             )
 
-    def resolve_template_volid(self, template_name: str, storage: str = "local", node: Optional[str] = None) -> Optional[str]:
+    def resolve_template_volid(
+        self, template_name: str, storage: str = "local", node: Optional[str] = None
+    ) -> Optional[str]:
         """Try to resolve a template name to a full volid."""
         node = node or self._get_node()
         # Try exact match first
@@ -108,11 +118,17 @@ class ProxmoxProvider:
                 return volid
         return None
 
-    def wait_for_boot(self, vmid: int, timeout: int = 120, node: Optional[str] = None) -> bool:
+    def wait_for_boot(
+        self, vmid: int, timeout: int = 120, node: Optional[str] = None
+    ) -> bool:
         """Poll container until systemd signals readiness."""
         node = node or self._get_node()
         for _ in range(timeout // 2):
-            result = self.exec(vmid, "systemctl is-system-running >/dev/null 2>&1 && echo OK", node=node)
+            result = self.exec(
+                vmid,
+                "systemctl is-system-running >/dev/null 2>&1 && echo OK",
+                node=node,
+            )
             if "OK" in result.stdout:
                 return True
             time.sleep(2)
@@ -178,15 +194,24 @@ class ProxmoxProvider:
             pass
 
     def exec(
-        self, vmid: int, command: str, user: str = "root", node: Optional[str] = None, retries: int = 3
+        self,
+        vmid: int,
+        command: str,
+        user: str = "root",
+        node: Optional[str] = None,
+        retries: int = 3,
     ) -> ExecResult:
         node = node or self._get_node()
         last_error = None
         for attempt in range(retries):
             try:
-                result = self.api.nodes(node).lxc(vmid).exec_post(
-                    command=command,
-                    user=user,
+                result = (
+                    self.api.nodes(node)
+                    .lxc(vmid)
+                    .exec_post(
+                        command=command,
+                        user=user,
+                    )
                 )
                 stdout = result.get("stdout", "")
                 stderr = result.get("stderr", "")
@@ -196,21 +221,39 @@ class ProxmoxProvider:
                 last_error = e
                 err_str = str(e)
                 # Retry on transient errors only
-                if any(x in err_str for x in ["ct did not start", "timeout", "Connection refused", "CT not running"]):
+                if any(
+                    x in err_str
+                    for x in [
+                        "ct did not start",
+                        "timeout",
+                        "Connection refused",
+                        "CT not running",
+                    ]
+                ):
                     time.sleep(2)
                     continue
                 break  # Non-transient error, fail immediately
         return ExecResult("", str(last_error), 1)
 
     def exec_with_env(
-        self, vmid: int, command: str, env: Dict[str, str], user: str = "root", node: Optional[str] = None
+        self,
+        vmid: int,
+        command: str,
+        env: Dict[str, str],
+        user: str = "root",
+        node: Optional[str] = None,
     ) -> ExecResult:
         env_str = " ".join([f"{k}='{v}'" for k, v in env.items()])
         full_cmd = f"export {env_str} && {command}"
         return self.exec(vmid, full_cmd, user, node)
 
     def push_file(
-        self, vmid: int, local_path: str, remote_path: str, user: str = "root", node: Optional[str] = None
+        self,
+        vmid: int,
+        local_path: str,
+        remote_path: str,
+        user: str = "root",
+        node: Optional[str] = None,
     ) -> None:
         """Push a file to the container using pct exec with base64 encoding."""
         node = node or self._get_node()
@@ -232,9 +275,16 @@ class ProxmoxProvider:
             self.exec(vmid, f"printf '%s' '{chunk}' >> {remote_path}.b64", user, node)
 
         # Decode the full file at once
-        self.exec(vmid, f"base64 -d {remote_path}.b64 > {remote_path} && rm {remote_path}.b64", user, node)
+        self.exec(
+            vmid,
+            f"base64 -d {remote_path}.b64 > {remote_path} && rm {remote_path}.b64",
+            user,
+            node,
+        )
 
-    def wait_for_network(self, vmid: int, timeout: int = 120, node: Optional[str] = None) -> bool:
+    def wait_for_network(
+        self, vmid: int, timeout: int = 120, node: Optional[str] = None
+    ) -> bool:
         node = node or self._get_node()
         for _ in range(timeout // 2):
             result = self.exec(vmid, "ping -c1 -W2 1.1.1.1 >/dev/null 2>&1 && echo OK")
@@ -243,7 +293,9 @@ class ProxmoxProvider:
             time.sleep(2)
         return False
 
-    def wait_for_port(self, vmid: int, port: int, timeout: int = 60, node: Optional[str] = None) -> bool:
+    def wait_for_port(
+        self, vmid: int, port: int, timeout: int = 60, node: Optional[str] = None
+    ) -> bool:
         node = node or self._get_node()
         for _ in range(timeout // 2):
             result = self.exec(vmid, f"ss -tlnp | grep -q ':{port} ' && echo OK")
@@ -255,7 +307,9 @@ class ProxmoxProvider:
     def get_container_ip(self, vmid: int, node: Optional[str] = None) -> Optional[str]:
         """Try to get IP from guest agent or network config."""
         node = node or self._get_node()
-        result = self.exec(vmid, "ip -4 -o addr show eth0 | awk '{print $4}' | cut -d/ -f1")
+        result = self.exec(
+            vmid, "ip -4 -o addr show eth0 | awk '{print $4}' | cut -d/ -f1"
+        )
         ip = result.stdout.strip()
         if ip:
             return ip

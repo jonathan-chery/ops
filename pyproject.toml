@@ -53,6 +53,11 @@ data_files = [
     "src/ops/blueprints/templates/*.tpl",
 ]
 
+[tool.pytest.ini_options]
+testpaths = ["tests", "src"]
+pythonpath = ["src"]
+addopts = "-v"
+
 [tool.mypy]
 python_version = "3.12"
 warn_return_any = false

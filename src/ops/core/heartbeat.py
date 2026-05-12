@@ -82,8 +82,11 @@ class HeartbeatManager:
             "hostname": blueprint.container.hostname,
             "ip": state.ip,
             "node": state.node,
-            "status": "HEARTBEAT_OK" if health_result.get("status") == "ok" else "HEARTBEAT_FAILED",
-            "deployed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "") + "Z",
+            "status": "HEARTBEAT_OK"
+            if health_result.get("status") == "ok"
+            else "HEARTBEAT_FAILED",
+            "deployed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "")
+            + "Z",
             "health_check": health_result,
             "ssh_keys": ssh_keys,
             "access": {

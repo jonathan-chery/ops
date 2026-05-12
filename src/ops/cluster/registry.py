@@ -115,7 +115,9 @@ class NodeRegistry:
 
     def prune(self, max_age_seconds: int = 45) -> int:
         """Remove nodes that haven't been seen within max_age_seconds."""
-        cutoff = (datetime.now(timezone.utc) - timedelta(seconds=max_age_seconds)).isoformat()
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(seconds=max_age_seconds)
+        ).isoformat()
         with sqlite3.connect(str(self.db_path)) as conn:
             cur = conn.execute(
                 "DELETE FROM nodes WHERE last_seen < ?",

@@ -30,6 +30,7 @@ class LxcMountConfig(BaseModel):
     Injected into /etc/pve/lxc/<vmid>.conf after container creation.
     Only used when `deployment.type == 'firecracker'` with `backend='lxc'`.
     """
+
     key: str
     value: str
 

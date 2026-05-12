@@ -58,7 +58,10 @@ class DiscoveryService:
                 "api_port": advertise_port,
                 "transport": self.config.transport,
                 "labels": self.config.labels,
-                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "") + "Z",
+                "timestamp": datetime.now(timezone.utc)
+                .isoformat()
+                .replace("+00:00", "")
+                + "Z",
             },
             separators=(",", ":"),
         ).encode()

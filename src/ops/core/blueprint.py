@@ -7,12 +7,15 @@ from ..models.blueprint import AppBlueprint
 
 
 class BlueprintManager:
-    def __init__(self, user_dir: str = "~/.ops/blueprints", builtin_dir: Optional[str] = None):
+    def __init__(
+        self, user_dir: str = "~/.ops/blueprints", builtin_dir: Optional[str] = None
+    ):
         self.user_dir = Path(user_dir).expanduser()
         self.user_dir.mkdir(parents=True, exist_ok=True)
 
         if builtin_dir is None:
             import ops
+
             ops_file = ops.__file__
             if ops_file is None:
                 raise RuntimeError("Unable to determine built-in blueprints directory")
@@ -35,7 +38,9 @@ class BlueprintManager:
 
         path = user_path if user_path.exists() else builtin_path
         if not path.exists():
-            raise FileNotFoundError(f"Blueprint '{name}' not found in user or built-in directories")
+            raise FileNotFoundError(
+                f"Blueprint '{name}' not found in user or built-in directories"
+            )
 
         with open(path, "r") as f:
             data = yaml.safe_load(f)
@@ -61,7 +66,12 @@ class BlueprintManager:
     def save(self, blueprint: AppBlueprint):
         path = self.user_dir / f"{blueprint.name}.yaml"
         with open(path, "w") as f:
-            yaml.dump(blueprint.model_dump(mode="json", exclude_none=True), f, default_flow_style=False, sort_keys=False)
+            yaml.dump(
+                blueprint.model_dump(mode="json", exclude_none=True),
+                f,
+                default_flow_style=False,
+                sort_keys=False,
+            )
 
     def init_from_template(self, name: str, template_name: str):
         builtin_path = self.builtin_dir / f"{template_name}.yaml"

@@ -57,7 +57,7 @@ Backend detection happens in `_phase_preflight()` and is cached in `DeploymentSt
 - NEVER interpolate raw strings into shell commands without passing through `quote()`.
 - NEVER store secrets, tokens, or private keys in plaintext. Use Fernet encryption via `ConfigManager.encrypt_value`/`decrypt_value`, or store in OS keyring.
 - NEVER use `os.system()`, `subprocess` unsafely, or `eval()` on untrusted input.
-- NEVER run CI/CD mutating git commands (`git push`, `git merge`, `git commit`, `git reset`, `git rebase`, `git tag --force`) without explicit user confirmation.
+- NEVER run CI/CD mutating git commands (`git push`, `git merge`, `git commit`, `git reset`, `git rebase`, `git tag --force`) without explicit user confirmation, **except when executing the mandatory Merge Request workflow defined in Git & CI/CD Standards**.
 
 ## Workflow Requirements
 1. **Plan before work:** Briefly outline your approach as a bulleted list before writing or editing code.
@@ -76,18 +76,18 @@ Backend detection happens in `_phase_preflight()` and is cached in `DeploymentSt
   - `fix(utils): correct SSH key path resolution`
   - `test(deployers): add native deployer restart scenario`
   - `chore(build): bump pyinstaller to 6.x`
-- **Merge Request workflow:**
-  1. Open an MR in GitLab against `main`.
-  2. Ensure the pipeline (lint + tests + type checks) passes.
-  3. Request review and wait for approval.
-  4. Merge only when both pipeline status is green **and** the MR is explicitly approved.
-- **AI Agent MR Workflow (when explicitly requested by user):**
+- **Merge Request workflow (mandatory after every change):**
+  After completing any code changes — whether a single commit or multiple — you MUST open a Merge Request against `main`. There are no exceptions.
   1. Push the feature branch to the GitLab remote.
   2. Create the MR via GitLab CLI (`glab`) with a descriptive title and summary.
   3. Monitor the CI/CD pipeline until it completes.
-  4. If the pipeline fails, report failures to the user and do NOT approve.
-  5. If the pipeline is green, approve the MR on behalf of the agent.
-  6. **Handoff:** Notify the user that the MR is approved and ready for them to click the final merge button. NEVER click merge yourself.
+  4. If the pipeline fails, troubleshoot the failures, apply fixes, push new commits, and re-trigger the pipeline. Repeat until the pipeline is fully green.
+  5. Once the pipeline is green, approve the MR on behalf of the agent.
+  6. **Handoff:** Provide the MR link to the user and notify them that the MR is approved and ready for them to click the final merge button. NEVER click merge yourself.
+- **Runner Tagging Rules:**
+  - Jobs that specify an `image:` key (e.g., `image: python:3.12-slim`) MUST use `tags: [docker]` so they are scheduled on a Docker-capable runner.
+  - Jobs without an `image:` key that need to execute directly on the host (Ubuntu 24.04 shell executor, no sudo) MUST use `tags: [shell]`.
+  - Never omit `tags` unless a project-wide default runner is explicitly configured in the GitLab instance.
 
 ## Documentation Rules
 - Every new exported function or method must have a module-level docstring, preferably in PEP 257 style.
