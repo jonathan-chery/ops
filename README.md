@@ -17,10 +17,18 @@ A robust, phased, idempotent CLI for deploying and managing Proxmox LXC containe
 
 ## Installation
 
+### One-line installer (Linux)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jonathan-chery/ops/main/install.sh | sh
+```
+
+### From source
+
 ```bash
 # Using pipx
 pip install pipx
-pipx install .
+pipx install git+https://github.com/jonathan-chery/ops.git
 
 # Or in a virtual environment
 python3 -m venv .venv

@@ -1,5 +1,10 @@
 # GitLab CI pipeline for the ops project
-# Future-proof: pytest discovers tests anywhere in the repo tree.
+#
+# Pipeline stages: lint → typecheck → test → build → docs → release
+#
+# Release workflow:
+#   1. Merge to main → build succeeds → auto-tag commits + tags vX.Y.Z
+#   2. Tag vX.Y.Z triggers full pipeline → binaries built → GitHub release created
 #
 # Runner tagging rules:
 #   - Docker jobs (image: ...)   -> tags: [docker]
@@ -10,12 +15,21 @@ stages:
   - typecheck
   - test
   - build
+  - docs
+  - release
 
 default:
   timeout: 15 minutes
 
 variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  GITHUB_REPOSITORY: "jonathan-chery/ops"
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+    - if: $CI_COMMIT_BRANCH
 
 cache:
   key: "${CI_JOB_NAME}-${CI_COMMIT_REF_SLUG}"
@@ -85,23 +99,174 @@ test-pytest:
     when: always
 
 # ------------------------------------------------------------------
-# Build stage — shell executor (no Docker, no sudo)
+# Build stage
 # ------------------------------------------------------------------
 
-build-binary:
+build-linux-amd64:
   stage: build
   tags:
     - shell
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
   script:
-    - echo "Building PyInstaller binary..."
-    # Assumes build deps and pyinstaller are pre-installed on the runner host.
-    - python3 -m PyInstaller --onefile --name ops src/ops/cli.py || true
+    - echo "Building PyInstaller binary (linux-amd64)..."
+    - python3 -m PyInstaller --onefile --name ops src/ops/cli.py
+    - mkdir -p dist
+    - cp dist/ops "dist/ops-${CI_COMMIT_TAG:-latest}-linux-amd64"
   artifacts:
     paths:
       - dist/
     expire_in: 1 week
     when: always
-  allow_failure: false
-  only:
-    - tags
-    - main
+
+build-linux-arm64:
+  stage: build
+  tags:
+    - docker
+  image: python:3.12-slim
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+  before_script:
+    - apt-get update -y && apt-get install -y --no-install-recommends binutils
+    - pip install --upgrade pip
+    - pip install -e ".[dev,build]"
+  script:
+    - echo "Building PyInstaller binary (linux-arm64)..."
+    - python -m PyInstaller --onefile --name ops src/ops/cli.py
+    - mkdir -p dist
+    - cp dist/ops "dist/ops-${CI_COMMIT_TAG:-latest}-linux-arm64"
+  artifacts:
+    paths:
+      - dist/
+    expire_in: 1 week
+    when: always
+
+# Placeholder for future Windows build — requires a Windows runner
+# build-windows-amd64:
+#   stage: build
+#   tags: [windows]
+#   script:
+#     - python -m PyInstaller --onefile --name ops src/ops/cli.py
+#     - mkdir dist
+#     - copy dist\ops.exe dist\ops-%CI_COMMIT_TAG%-windows-amd64.exe
+#   artifacts:
+#     paths:
+#       - dist/
+#     expire_in: 1 week
+
+# ------------------------------------------------------------------
+# Docs stage
+# ------------------------------------------------------------------
+
+build-docs:
+  extends: .docker-job
+  stage: docs
+  script:
+    - pip install mkdocs-material mkdocs-minify-plugin mkdocs-git-revision-date-localized-plugin
+    - mkdocs build
+  artifacts:
+    paths:
+      - site/
+    expire_in: 1 week
+    when: always
+
+publish-docs:
+  extends: .docker-job
+  stage: docs
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+  needs:
+    - job: build-docs
+      artifacts: true
+  script:
+    - |
+      git remote add github "https://${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" 2>/dev/null || true
+      pip install mkdocs-material mkdocs-minify-plugin mkdocs-git-revision-date-localized-plugin
+      mkdocs gh-deploy --remote-name github --force
+
+# ------------------------------------------------------------------
+# Release stage — only on main branch after successful build
+# ------------------------------------------------------------------
+
+auto-tag:
+  stage: release
+  tags:
+    - docker
+  image: python:3.12-slim
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  needs:
+    - job: build-linux-amd64
+      artifacts: false
+    - job: build-linux-arm64
+      artifacts: false
+    - job: test-pytest
+      artifacts: false
+    - job: typecheck-mypy
+      artifacts: false
+  variables:
+    GIT_DEPTH: "0"
+  before_script:
+    - pip install --upgrade pip
+    - pip install toml
+    - git config user.email "ops-ci@cloudinit.dev"
+    - git config user.name "Ops CI"
+  script:
+    - echo "Checking for auto-tag..."
+    - |
+      # Prevent recursion: if HEAD already has a tag, skip
+      if git describe --tags --exact-match HEAD >/dev/null 2>&1; then
+        echo "[INFO] HEAD already tagged. Skipping auto-tag."
+        exit 0
+      fi
+    - python scripts/auto_tag.py
+
+# ------------------------------------------------------------------
+# Release stage — only on version tags
+# ------------------------------------------------------------------
+
+publish-release:
+  stage: release
+  tags:
+    - docker
+  image: python:3.12-slim
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+  needs:
+    - job: build-linux-amd64
+      artifacts: true
+    - job: build-linux-arm64
+      artifacts: true
+    - job: build-docs
+      artifacts: false
+  before_script:
+    - apt-get update -y && apt-get install -y --no-install-recommends curl ca-certificates git
+    - |
+      # Install gh CLI
+      curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+      chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+      apt-get update -y && apt-get install -y gh
+  script:
+    - |
+      echo "Publishing GitHub release for $CI_COMMIT_TAG..."
+      # Compute SHA256SUMS
+      cd dist
+      sha256sum ops-* > SHA256SUMS.txt
+      cd ..
+      # Generate release notes
+      NOTES=$(python scripts/generate_release_notes.py)
+      # Authenticate with GitHub
+      echo "$GITHUB_TOKEN" | gh auth login --with-token
+      # Create release
+      gh release create "$CI_COMMIT_TAG" \
+        --repo "$GITHUB_REPOSITORY" \
+        --title "$CI_COMMIT_TAG" \
+        --notes "$NOTES" \
+        --target "$CI_COMMIT_SHA" \
+        dist/ops-* dist/SHA256SUMS.txt install.sh
+      echo "[OK] Release $CI_COMMIT_TAG published to github.com/$GITHUB_REPOSITORY"
