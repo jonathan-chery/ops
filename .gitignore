@@ -24,3 +24,22 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# Caches & generated artifacts
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+.tox/
+node_modules/
+*.spec
+*.db
+*.sqlite3
+*.log
+*.tmp
+*.bak
+*~
+
+# Local env files (safety net for any generated .env files)
+.env
+.env.local
+.env.*.local
