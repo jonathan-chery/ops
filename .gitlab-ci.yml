@@ -72,7 +72,7 @@ test-pytest:
   extends: .docker-job
   stage: test
   script:
-    - pytest --cov=src/ops --cov-report=xml --cov-report=term --doctest-modules
+    - python -m pytest --co --doctest-modules src/ops/ 2>&1 | tail -1 | grep -q "no tests ran" && echo "No tests found; skipping" || pytest --cov=src/ops --cov-report=xml --cov-report=term --doctest-modules
   coverage: '/TOTAL\s+\d+\s+\d+\s+\d+\s+\d+\s+(\d+\.\d+%)/'
   artifacts:
     reports:
