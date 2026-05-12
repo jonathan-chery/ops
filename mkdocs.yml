@@ -1,5 +1,5 @@
 site_name: Ops CLI
-description: "Proxmox LXC Orchestrator CLI documentation"
+site_description: "Proxmox LXC Orchestrator CLI documentation"
 
 site_url: https://jonathan-chery.github.io/ops/
 repo_url: https://github.com/jonathan-chery/ops
@@ -33,6 +33,7 @@ nav:
   - Blueprints Gallery: blueprints-gallery.md
   - Templates Gallery: templates-gallery.md
   - Changelog: changelog.md
+  - Roadmap: ROADMAP.md
 
 
 theme:
