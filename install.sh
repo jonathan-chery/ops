@@ -150,14 +150,27 @@ else
 fi
 
 log_info "Fetching release metadata..."
-RELEASE_JSON=$(http_get "$API_URL") || {
-    log_error "Failed to fetch release metadata from GitHub API."
-    log_error "URL: $API_URL"
-    log_error "You can manually download from: https://github.com/$OWNER_REPO/releases"
+RELEASE_JSON=$(http_get "$API_URL" 2>/dev/null) || {
+    log_warn "No release found at $API_URL"
+    log_warn "This is likely because no release has been published yet."
+    log_warn ""
+    log_warn "To install from source instead:"
+    log_warn "  pip install git+https://github.com/$OWNER_REPO.git"
+    log_warn ""
+    log_warn "Or manually download the latest code:"
+    log_warn "  git clone https://github.com/$OWNER_REPO.git"
+    log_warn "  cd ops && pip install -e ."
     exit 1
 }
 
 TAG_NAME=$(printf '%s' "$RELEASE_JSON" | grep '"tag_name"' | head -n1 | sed 's/.*"tag_name": "\([^"]*\)".*/\1/')
+
+# Fallback: if user passed --version v0.1.1, try without the tag prefix
+if [ -z "$TAG_NAME" ] && [ "$VERSION" != "latest" ]; then
+    API_URL="https://api.github.com/repos/$OWNER_REPO/releases/tags/$VERSION"
+    RELEASE_JSON=$(http_get "$API_URL" 2>/dev/null) || true
+    TAG_NAME=$(printf '%s' "$RELEASE_JSON" | grep '"tag_name"' | head -n1 | sed 's/.*"tag_name": "\([^"]*\)".*/\1/')
+fi
 if [ -z "$TAG_NAME" ]; then
     log_error "Could not find release tag in GitHub API response."
     exit 1

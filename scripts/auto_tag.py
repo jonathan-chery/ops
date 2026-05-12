@@ -16,20 +16,12 @@ Usage
 -----
     python scripts/auto_tag.py [--dry-run]
 
-Environment variables
----------------------
-    GITHUB_REPOSITORY : str
-        ``owner/repo`` target for release metadata. Defaults to ``jonathan-chery/ops``.
-
 """
 
 import argparse
 import re
 import subprocess
 from pathlib import Path
-
-
-DEFAULT_REPO = "jonathan-chery/ops"
 
 
 def _run(cmd: list[str], check: bool = True) -> str:
@@ -187,7 +179,10 @@ def _update_changelog(new_version: str, commits: list[dict]) -> None:
             lines.extend(items)
             lines.append("")
     if not changelog_path.exists():
-        header = "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\n"
+        header = (
+            "# Changelog\n\n"
+            "All notable changes to this project will be documented in this file.\n\n"
+        )
         changelog_path.write_text(header + "\n".join(lines))
     else:
         existing = changelog_path.read_text()
@@ -242,8 +237,11 @@ def main() -> int:
     _run(["git", "add", "src/ops/__init__.py", "pyproject.toml", "CHANGELOG.md"])
     _run(["git", "commit", "-m", f"chore(release): v{new_version} [skip ci]"])
     _run(["git", "tag", new_tag])
-    _run(["git", "push", "origin", "HEAD"])
-    _run(["git", "push", "origin", new_tag])
+    # Push commit + tag to whichever remotes are configured
+    remotes = _run(["git", "remote"]).splitlines()
+    for remote in remotes:
+        _run(["git", "push", remote, "HEAD"])
+        _run(["git", "push", remote, new_tag])
 
     print(f"[OK] Tagged and pushed {new_tag}")
     return 0
