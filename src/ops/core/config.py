@@ -9,7 +9,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 import keyring
 
-from ..models.config import OpsConfig
+from ops.models.config import OpsConfig
 
 
 class ConfigManager:
@@ -143,6 +143,13 @@ class ConfigManager:
 
     def _generate_default_config(self) -> OpsConfig:
         return OpsConfig()
+
+    @property
+    def ssh_dir(self) -> Path:
+        d = self.config_path.parent / "ssh"
+        d.mkdir(parents=True, exist_ok=True)
+        os.chmod(d, 0o700)
+        return d
 
     def get_secrets_dir(self, app_name: str) -> Path:
         d = self.secrets_dir / app_name

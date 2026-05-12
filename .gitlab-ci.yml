@@ -59,7 +59,7 @@ lint-yaml:
 typecheck-mypy:
   extends: .docker-job
   stage: typecheck
-  allow_failure: true
+  allow_failure: false
   script:
     - pip install types-paramiko types-PyYAML types-requests
     - mypy src/ops
@@ -72,7 +72,7 @@ test-pytest:
   extends: .docker-job
   stage: test
   script:
-    - pytest --cov=src/ops --cov-report=xml --cov-report=term
+    - pytest --cov=src/ops --cov-report=xml --cov-report=term --doctest-modules
   coverage: '/TOTAL\s+\d+\s+\d+\s+\d+\s+\d+\s+(\d+\.\d+%)/'
   artifacts:
     reports:
