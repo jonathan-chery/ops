@@ -3,10 +3,9 @@ import base64
 from pathlib import Path
 from typing import Dict
 
-
-from ..core.config import ConfigManager
-from ..models.secrets import SecretValue
-from ..models.blueprint import SecretConfig
+from ops.core.config import ConfigManager
+from ops.models.secrets import SecretValue
+from ops.models.blueprint import SecretConfig
 
 
 class SecretManager:

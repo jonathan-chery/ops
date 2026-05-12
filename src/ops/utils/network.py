@@ -1,7 +1,7 @@
 from ipaddress import IPv4Address
 from typing import List
 
-from ..models.network import SubnetConfig
+from ops.models.network import SubnetConfig
 
 
 class IPAllocator:
