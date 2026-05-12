@@ -114,9 +114,7 @@ class SSHOnboardManager:
         client.close()
         return True, f"Successfully onboarded {username}@{hostname}"
 
-    def rotate_key_for_all_hosts(
-        self, hosts: List
-    ) -> Tuple[bool, str]:
+    def rotate_key_for_all_hosts(self, hosts: List) -> Tuple[bool, str]:
         """Regenerate the ops keypair and push the new public key to all *hosts*.
 
         Returns ``(True, message)`` on full success or
@@ -178,7 +176,10 @@ class SSHOnboardManager:
             old_public.unlink()
 
         if failed_hosts:
-            return False, f"Rotation completed with {len(failed_hosts)} failures: {', '.join(failed_hosts)}"
+            return (
+                False,
+                f"Rotation completed with {len(failed_hosts)} failures: {', '.join(failed_hosts)}",
+            )
         return True, "Key rotated and updated on all hosts"
 
 
