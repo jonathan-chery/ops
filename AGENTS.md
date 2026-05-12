@@ -85,8 +85,8 @@ Backend detection happens in `_phase_preflight()` and is cached in `DeploymentSt
   5. Once the pipeline is green, approve the MR on behalf of the agent.
   6. **Handoff:** Provide the MR link to the user and notify them that the MR is approved and ready for them to click the final merge button. NEVER click merge yourself.
 - **Runner Tagging Rules:**
-  - Jobs that specify an `image:` key (e.g., `image: python:3.12-slim`) MUST use `tags: [docker]` so they are scheduled on a Docker-capable runner.
-  - Jobs without an `image:` key that need to execute directly on the host (Ubuntu 24.04 shell executor, no sudo) MUST use `tags: [shell]`.
+  - ALL jobs MUST use `tags: [docker]` with an explicit `image:` key so they run in a clean, reproducible container.
+  - Jobs without an `image:` key and `tags: [shell]` are FORBIDDEN unless the task genuinely cannot run in Docker (e.g., hardware access, custom kernel, future Windows runner).
   - Never omit `tags` unless a project-wide default runner is explicitly configured in the GitLab instance.
 
 ## Testing Standards
