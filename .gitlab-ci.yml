@@ -72,7 +72,7 @@ test-pytest:
   extends: .docker-job
   stage: test
   script:
-    - pytest --cov=src/ops --cov-report=xml --cov-report=term --doctest-modules
+    - python -m pytest --cov=src/ops --cov-report=xml --cov-report=term --doctest-modules || test $? -eq 5
   coverage: '/TOTAL\s+\d+\s+\d+\s+\d+\s+\d+\s+(\d+\.\d+%)/'
   artifacts:
     reports:
@@ -101,7 +101,7 @@ build-binary:
       - dist/
     expire_in: 1 week
     when: always
-  allow_failure: true
+  allow_failure: false
   only:
     - tags
     - main

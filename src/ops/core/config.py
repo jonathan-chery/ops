@@ -1,7 +1,7 @@
 import os
 import base64
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import yaml
 from cryptography.fernet import Fernet
@@ -95,9 +95,11 @@ class ConfigManager:
         f = self._get_fernet()
         return f.decrypt(inner.encode()).decode()
 
-    def _process_config_values(self, data: dict, encrypt: bool = False) -> dict:
+    def _process_config_values(
+        self, data: Dict[str, Any], encrypt: bool = False
+    ) -> Dict[str, Any]:
         """Recursively encrypt/decrypt config values."""
-        result = {}
+        result: Dict[str, Any] = {}
         for key, value in data.items():
             if isinstance(value, dict):
                 result[key] = self._process_config_values(value, encrypt)
