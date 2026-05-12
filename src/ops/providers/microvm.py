@@ -1,11 +1,10 @@
 """Proxmox microVM provider via pve-microvm."""
 
 import time
-from typing import List, Optional
+from typing import Optional
 
 import paramiko
 
-from ..utils.ssh import SSHKeyManager
 from ..utils.safe_shell import quote
 from ..models.blueprint import AppBlueprint
 

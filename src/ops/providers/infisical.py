@@ -1,4 +1,4 @@
-from typing import Optional, Dict
+from typing import Optional
 
 from ..models.config import InfisicalConfig
 from ..models.secrets import SecretValue

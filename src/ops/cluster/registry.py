@@ -1,7 +1,8 @@
 """Cluster node registry backed by SQLite."""
 
+import os
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Optional
 
@@ -17,6 +18,7 @@ class NodeRegistry:
     def __init__(self, db_path: str = "~/.ops/cluster.db"):
         self.db_path = Path(db_path).expanduser()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        os.chmod(self.db_path.parent, 0o700)
         self._init_db()
 
     def _init_db(self) -> None:
@@ -52,7 +54,7 @@ class NodeRegistry:
             last_seen=(
                 datetime.fromisoformat(row["last_seen"])
                 if row["last_seen"]
-                else datetime.utcnow()
+                else datetime.now(timezone.utc)
             ),
             status=row["status"],
             labels=json.loads(row["labels"]) if row["labels"] else {},
@@ -113,12 +115,11 @@ class NodeRegistry:
 
     def prune(self, max_age_seconds: int = 45) -> int:
         """Remove nodes that haven't been seen within max_age_seconds."""
-        cutoff = (datetime.utcnow().isoformat(),)
+        cutoff = (datetime.now(timezone.utc) - timedelta(seconds=max_age_seconds)).isoformat()
         with sqlite3.connect(str(self.db_path)) as conn:
-            # Simplistic: delete all rows (in a real impl, compute cutoff time)
             cur = conn.execute(
                 "DELETE FROM nodes WHERE last_seen < ?",
-                (cutoff[0],),
+                (cutoff,),
             )
             conn.commit()
             return cur.rowcount
@@ -127,9 +128,16 @@ class NodeRegistry:
         with sqlite3.connect(str(self.db_path)) as conn:
             conn.execute(
                 "UPDATE nodes SET status = ?, last_seen = ? WHERE node_id = ?",
-                (status, datetime.utcnow().isoformat(), node_id),
+                (status, datetime.now(timezone.utc).isoformat(), node_id),
             )
             conn.commit()
+
+    def remove(self, node_id: str) -> bool:
+        """Remove a node from the registry by ID."""
+        with sqlite3.connect(str(self.db_path)) as conn:
+            cur = conn.execute("DELETE FROM nodes WHERE node_id = ?", (node_id,))
+            conn.commit()
+            return cur.rowcount > 0
 
     def select_for_placement(
         self, constraints: List[ClusterConstraint]

@@ -11,6 +11,7 @@ class AuditLogger:
     def __init__(self, log_dir: str = "~/.ops"):
         self.log_dir = Path(log_dir).expanduser()
         self.log_dir.mkdir(parents=True, exist_ok=True)
+        os.chmod(self.log_dir, 0o700)
         self.log_file = self.log_dir / "audit.log"
         self.max_bytes = 10 * 1024 * 1024  # 10 MB
         self.backup_count = 5
@@ -27,7 +28,9 @@ class AuditLogger:
             dst = self.log_dir / f"audit.log.{i + 1}"
             if src.exists():
                 src.rename(dst)
+                os.chmod(dst, 0o600)
         self.log_file.rename(self.log_dir / "audit.log.1")
+        os.chmod(self.log_dir / "audit.log.1", 0o600)
 
     def log(
         self,
@@ -50,6 +53,7 @@ class AuditLogger:
         }
         with open(self.log_file, "a") as f:
             f.write(json.dumps(entry) + "\n")
+        os.chmod(self.log_file, 0o600)
 
     def log_result(
         self,

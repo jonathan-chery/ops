@@ -1,9 +1,10 @@
 import json
+import os
 import time
 import urllib3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Dict
-from datetime import datetime
 
 import requests
 
@@ -19,6 +20,7 @@ class HeartbeatManager:
     def __init__(self, heartbeat_dir: str = "~/.ops/heartbeats"):
         self.heartbeat_dir = Path(heartbeat_dir).expanduser()
         self.heartbeat_dir.mkdir(parents=True, exist_ok=True)
+        os.chmod(self.heartbeat_dir, 0o700)
 
     def _heartbeat_path(self, app_name: str) -> Path:
         return self.heartbeat_dir / f"{app_name}_latest.json"
@@ -81,7 +83,7 @@ class HeartbeatManager:
             "ip": state.ip,
             "node": state.node,
             "status": "HEARTBEAT_OK" if health_result.get("status") == "ok" else "HEARTBEAT_FAILED",
-            "deployed_at": datetime.utcnow().isoformat() + "Z",
+            "deployed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "") + "Z",
             "health_check": health_result,
             "ssh_keys": ssh_keys,
             "access": {
@@ -92,6 +94,7 @@ class HeartbeatManager:
         path = self._heartbeat_path(app_name)
         with open(path, "w") as f:
             json.dump(heartbeat, f, indent=2)
+        os.chmod(path, 0o600)
 
         return heartbeat
 

@@ -7,7 +7,7 @@ import socket
 import struct
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Dict, List
 
@@ -58,7 +58,7 @@ class DiscoveryService:
                 "api_port": advertise_port,
                 "transport": self.config.transport,
                 "labels": self.config.labels,
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "") + "Z",
             },
             separators=(",", ":"),
         ).encode()

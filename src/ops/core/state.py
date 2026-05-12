@@ -31,6 +31,7 @@ class StateManager:
         data["current_phase"] = state.current_phase.value
         with open(path, "w") as f:
             json.dump(data, f, indent=2)
+        Path(path).chmod(0o600)
 
     def delete(self, app_name: str):
         path = self._state_path(app_name)

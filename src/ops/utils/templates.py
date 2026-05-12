@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from typing import Dict, Any
 
-from jinja2 import Environment, BaseLoader, UndefinedError
+from jinja2 import Environment, BaseLoader
 
 
 class TemplateEngine:

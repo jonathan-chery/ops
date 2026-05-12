@@ -1,8 +1,7 @@
-from ipaddress import IPv4Address, IPv4Network
-from typing import List, Optional
+from ipaddress import IPv4Address
+from typing import List
 
 from ..models.network import SubnetConfig
-from ..models.container import ContainerStatus
 
 
 class IPAllocator:
