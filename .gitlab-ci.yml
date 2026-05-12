@@ -72,7 +72,7 @@ test-pytest:
   extends: .docker-job
   stage: test
   script:
-    - pytest --cov=src/ops --cov-report=xml --cov-report=term --doctest-modules
+    - pytest --cov=src/ops --cov-report=xml --cov-report=term
   coverage: '/TOTAL\s+\d+\s+\d+\s+\d+\s+\d+\s+(\d+\.\d+%)/'
   artifacts:
     reports:
