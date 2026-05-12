@@ -220,6 +220,7 @@ auto-tag:
   variables:
     GIT_DEPTH: "0"
   before_script:
+    - apt-get update -y && apt-get install -y --no-install-recommends git
     - pip install --upgrade pip
     - pip install toml
     - git config user.email "ops-ci@cloudinit.dev"
@@ -232,7 +233,12 @@ auto-tag:
         echo "[INFO] HEAD already tagged. Skipping auto-tag."
         exit 0
       fi
+    - |
+      # Ensure GitHub remote exists so the tag is also pushed there
+      git remote add github "https://${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" 2>/dev/null || true
     - python scripts/auto_tag.py
+    # Push the new tag to GitHub so the mirror triggers release pipelines
+    - git push github --tags
 
 # ------------------------------------------------------------------
 # Release stage — only on version tags
