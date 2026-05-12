@@ -1,0 +1,7 @@
+:root {
+  --md-primary-fg-color: #6c63ff;
+}
+
+.md-typeset .admonition {
+  font-size: 0.85rem;
+}
