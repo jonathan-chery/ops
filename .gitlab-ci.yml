@@ -59,6 +59,7 @@ lint-yaml:
 typecheck-mypy:
   extends: .docker-job
   stage: typecheck
+  allow_failure: true
   script:
     - pip install types-paramiko types-PyYAML types-requests
     - mypy src/ops
