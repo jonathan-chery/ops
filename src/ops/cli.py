@@ -9,8 +9,28 @@ from ops.core.state import StateManager
 from ops.utils.secrets import SecretManager
 from ops.utils.ssh import SSHOnboardManager
 from ops.models.config import ProxmoxHostConfig
+from ops import __version__
 
-app = typer.Typer(help="Proxmox LXC Orchestrator CLI")
+app = typer.Typer(
+    help="Proxmox LXC Orchestrator CLI",
+    add_completion=False,
+)
+
+
+def version_callback(value: bool) -> None:
+    if value:
+        typer.echo(f"ops {__version__}")
+        raise typer.Exit(0)
+
+
+@app.callback()
+def callback(
+    version: bool = typer.Option(
+        False, "--version", callback=version_callback, is_eager=True
+    ),
+) -> None:
+    """Proxmox LXC Orchestrator CLI."""
+    pass
 
 
 def _get_orchestrator() -> Orchestrator:

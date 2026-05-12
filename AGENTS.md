@@ -97,6 +97,19 @@ Backend detection happens in `_phase_preflight()` and is cached in `DeploymentSt
 - **Test discovery:** Tests must be discoverable via pytest in `tests/` or as inline `test_*.py` files anywhere in `src/`.
 - **Pipeline contract:** If a pipeline job fails, fix the code—not the CI config.
 
+## Release & Distribution Standards
+- **Conventional commits are mandatory for auto-tag:** The `auto-tag` script (`scripts/auto_tag.py`) parses conventional commits since the last `v*` tag to compute the next semantic version. The merge commit itself is excluded from release notes and does not influence version bumps.
+  - `feat:` → minor bump
+  - `fix:`, `chore:`, `docs:`, `style:`, `refactor:`, `perf:`, `test:`, `ci:`, `build:` → patch bump
+  - `feat!:` / `BREAKING CHANGE:` in body → major bump
+- **Auto-tag flow:** After every successful `main` pipeline, the `auto-tag` job bumps `src/ops/__init__.py` and `pyproject.toml`, commits `chore(release): vX.Y.Z [skip ci]`, and pushes tag `vX.Y.Z`. The version-bump commit uses `[skip ci]` to prevent pipeline recursion.
+- **GitHub release:** The tag pipeline triggers `publish-release`, which uses `gh` CLI to create a GitHub release at `GITHUB_REPOSITORY` (default: `jonathan-chery/ops`). It uploads binaries, `SHA256SUMS.txt`, and `install.sh`. No "built on GitLab" metadata appears in release notes.
+- **CI variables for release:**
+  - `GITHUB_TOKEN` — GitHub PAT with `repo` scope (masked + protected)
+  - `GITHUB_REPOSITORY` — Target `owner/repo` (change this to publish to a different org)
+- **Docs site:** MkDocs Material builds at `docs/` and deploys to GitHub Pages via `mkdocs gh-deploy` on every `main` and tag pipeline.
+- **Installer:** `install.sh` is a POSIX shell script that downloads the correct binary from GitHub releases. It is committed to the repo root and published as a release asset.
+
 ## Documentation Rules
 - Every new exported function or method must have a module-level docstring, preferably in PEP 257 style.
 - If you add a new Pydantic model field that changes the blueprint schema (`BLUEPRINT_SCHEMA_VERSION`), explain the migration path in a comment.

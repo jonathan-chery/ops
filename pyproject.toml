@@ -30,6 +30,9 @@ dev = [
     "ruff",
     "mypy",
     "pytest-cov",
+    "mkdocs-material",
+    "mkdocs-minify-plugin",
+    "mkdocs-git-revision-date-localized-plugin",
 ]
 
 [project.scripts]
