@@ -52,3 +52,11 @@ data_files = [
     "src/ops/blueprints/*.yaml",
     "src/ops/blueprints/templates/*.tpl",
 ]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = false
+warn_unused_configs = true
+ignore_missing_imports = true
+check_untyped_defs = false
+show_error_codes = true

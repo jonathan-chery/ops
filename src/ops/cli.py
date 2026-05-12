@@ -707,11 +707,21 @@ def cluster_leave(
 
     config_mgr = ConfigManager()
     config = config_mgr.load()
+
+    # Remove this node from the cluster registry
+    from ops.cluster.registry import NodeRegistry
+    from ops.cluster.discovery import DiscoveryService
+
+    discovery = DiscoveryService(config.cluster)
+    node_id = discovery.node_id
+    registry = NodeRegistry()
+    removed = registry.remove(node_id)
+    if removed:
+        typer.echo(f"[INFO] Removed node {node_id} from cluster registry")
+
     config.cluster.enabled = False
     config.cluster.secret = None
     config_mgr.save(config)
-
-    # Mark this node as leaving in the registry (simplistic)
     typer.echo("[OK] Left cluster")
 
 

@@ -1,7 +1,6 @@
 import base64
 import time
-import subprocess
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional, Dict
 
 from proxmoxer import ProxmoxAPI
 

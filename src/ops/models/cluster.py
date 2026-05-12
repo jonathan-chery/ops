@@ -1,5 +1,5 @@
 from typing import Optional, Dict, List, Literal
-from datetime import datetime
+from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 
 
@@ -13,7 +13,7 @@ class OpsNode(BaseModel):
     api_port: Optional[int] = None
     fingerprint: str
     transport: Literal["ssh", "https"] = "ssh"
-    last_seen: datetime = Field(default_factory=datetime.utcnow)
+    last_seen: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     status: Literal["active", "suspected", "failed"] = "active"
     labels: Dict[str, str] = Field(default_factory=dict)
     resources: Dict[str, int] = Field(default_factory=dict)  # cpu, mem, disk

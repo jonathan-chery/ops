@@ -1,11 +1,8 @@
 import os
 import base64
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Dict
 
-from cryptography.fernet import Fernet
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 from ..core.config import ConfigManager
 from ..models.secrets import SecretValue

@@ -1,6 +1,6 @@
 from enum import Enum
 from typing import Dict, List, Optional, Set
-from datetime import datetime
+from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 
 
@@ -24,18 +24,18 @@ class DeploymentState(BaseModel):
     backend: Optional[str] = None  # Cached firecracker backend (microvm or lxc)
     secrets_resolved: Dict[str, str] = Field(default_factory=dict)
     errors: List[str] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     completed: bool = False
 
     def mark_phase_complete(self, phase: DeploymentPhase):
         self.phases_completed.add(phase.value)
         self.current_phase = phase
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
 
     def is_phase_complete(self, phase: DeploymentPhase) -> bool:
         return phase.value in self.phases_completed
 
     def add_error(self, error: str):
         self.errors.append(error)
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)

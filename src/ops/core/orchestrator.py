@@ -277,7 +277,7 @@ class Orchestrator:
             print("--> [PROVISION] Skipping LXC provision (microVM backend)")
             state.mark_phase_complete(DeploymentPhase.PROVISION)
             self._save_state(state)
-            print(f"    [OK] MicroVM backend — no LXC container needed")
+            print("    [OK] MicroVM backend — no LXC container needed")
             return
 
         print("--> [PROVISION] Creating LXC container...")
