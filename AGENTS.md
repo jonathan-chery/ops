@@ -89,6 +89,14 @@ Backend detection happens in `_phase_preflight()` and is cached in `DeploymentSt
   - Jobs without an `image:` key that need to execute directly on the host (Ubuntu 24.04 shell executor, no sudo) MUST use `tags: [shell]`.
   - Never omit `tags` unless a project-wide default runner is explicitly configured in the GitLab instance.
 
+## Testing Standards
+- **No shortcuts:** `allow_failure: true` is never permitted on lint, typecheck, or test pipeline jobs.
+- **Coverage mandate:** Every new module must reach 80%+ test coverage.
+- **Regression tests:** Every bug fix must include a regression test that fails before the fix and passes after.
+- **Doctests:** All public functions must have runnable docstring examples; CI runs `--doctest-modules`.
+- **Test discovery:** Tests must be discoverable via pytest in `tests/` or as inline `test_*.py` files anywhere in `src/`.
+- **Pipeline contract:** If a pipeline job fails, fix the code—not the CI config.
+
 ## Documentation Rules
 - Every new exported function or method must have a module-level docstring, preferably in PEP 257 style.
 - If you add a new Pydantic model field that changes the blueprint schema (`BLUEPRINT_SCHEMA_VERSION`), explain the migration path in a comment.
