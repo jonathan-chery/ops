@@ -72,7 +72,7 @@ test-pytest:
   extends: .docker-job
   stage: test
   script:
-    - python -m pytest --co --doctest-modules src/ops/ 2>&1; result=$?; if [ $result -eq 5 ]; then echo "No tests found; skipping"; else pytest --cov=src/ops --cov-report=xml --cov-report=term --doctest-modules; fi
+    - python -m pytest --cov=src/ops --cov-report=xml --cov-report=term --doctest-modules; rc=$?; if [ $rc -eq 5 ]; then echo "No tests found; creating empty coverage.xml" && echo '<?xml version="1.0" encoding="utf-8"?><coverage line-rate="0" branch-rate="0" lines-covered="0" lines-valid="0" branches-covered="0" branches-valid="0" complexity="0" timestamp="0" version="0.1"><sources/><packages/></coverage>' > coverage.xml; elif [ $rc -ne 0 ]; then exit $rc; fi
   coverage: '/TOTAL\s+\d+\s+\d+\s+\d+\s+\d+\s+(\d+\.\d+%)/'
   artifacts:
     reports:
