@@ -69,7 +69,11 @@ class ConfigManager:
 
         # Try to store in keyring
         try:
-            keyring.set_password(service_name, key_name, base64.urlsafe_b64encode(self._master_key).decode())
+            keyring.set_password(
+                service_name,
+                key_name,
+                base64.urlsafe_b64encode(self._master_key).decode(),
+            )
         except Exception:
             # Fallback: store in password file
             key_file.write_bytes(salt + key_material)
@@ -98,8 +102,11 @@ class ConfigManager:
             if isinstance(value, dict):
                 result[key] = self._process_config_values(value, encrypt)
             elif isinstance(value, str):
-                if encrypt and not value.startswith("ENC[") and key in (
-                    "token_value", "client_secret", "admin_password", "password"
+                if (
+                    encrypt
+                    and not value.startswith("ENC[")
+                    and key
+                    in ("token_value", "client_secret", "admin_password", "password")
                 ):
                     result[key] = self.encrypt_value(value)
                 elif not encrypt and value.startswith("ENC["):

@@ -51,18 +51,20 @@ class DatabaseProvider:
             with self._connect() as conn:
                 conn.autocommit = True
                 with conn.cursor() as cur:
-                    cur.execute(
-                        "SELECT 1 FROM pg_roles WHERE rolname=%s", (username,)
-                    )
+                    cur.execute("SELECT 1 FROM pg_roles WHERE rolname=%s", (username,))
                     if cur.fetchone():
                         # User exists, update password
                         cur.execute(
-                            sql.SQL("ALTER USER {} WITH PASSWORD %s").format(sql.Identifier(username)),
+                            sql.SQL("ALTER USER {} WITH PASSWORD %s").format(
+                                sql.Identifier(username)
+                            ),
                             (password,),
                         )
                     else:
                         cur.execute(
-                            sql.SQL("CREATE USER {} WITH PASSWORD %s").format(sql.Identifier(username)),
+                            sql.SQL("CREATE USER {} WITH PASSWORD %s").format(
+                                sql.Identifier(username)
+                            ),
                             (password,),
                         )
                     # Grant privileges

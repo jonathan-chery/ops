@@ -74,28 +74,28 @@ class NestedFirecrackerDeployer(BaseDeployer):
             vmid,
             f"curl -fsS --unix-socket {socket_path} -X PUT '>http://localhost/machine-config' "
             f"-H 'Content-Type: application/json' "
-            f"-d '{{\"vcpu_count\":{blueprint.container.cores},\"mem_size_mib\":{blueprint.container.memory}}}'",
+            f'-d \'{{"vcpu_count":{blueprint.container.cores},"mem_size_mib":{blueprint.container.memory}}}\'',
             node=node,
         )
         proxmox.exec(
             vmid,
             f"curl -fsS --unix-socket {socket_path} -X PUT '>http://localhost/boot-source' "
             f"-H 'Content-Type: application/json' "
-            f"-d '{{\"kernel_image_path\":\"{kernel}\",\"boot_args\":\"console=ttyS0 reboot=k panic=1 pci=off\"}}'",
+            f'-d \'{{"kernel_image_path":"{kernel}","boot_args":"console=ttyS0 reboot=k panic=1 pci=off"}}\'',
             node=node,
         )
         proxmox.exec(
             vmid,
             f"curl -fsS --unix-socket {socket_path} -X PUT '>http://localhost/drives/rootfs' "
             f"-H 'Content-Type: application/json' "
-            f"-d '{{\"drive_id\":\"rootfs\",\"path_on_host\":\"{rootfs_path}\",\"is_root_device\":true,\"is_read_only\":false}}'",
+            f'-d \'{{"drive_id":"rootfs","path_on_host":"{rootfs_path}","is_root_device":true,"is_read_only":false}}\'',
             node=node,
         )
         proxmox.exec(
             vmid,
             f"curl -fsS --unix-socket {socket_path} -X PUT '>http://localhost/network-interfaces/eth0' "
             f"-H 'Content-Type: application/json' "
-            f"-d '{{\"iface_id\":\"eth0\",\"host_dev_name\":\"{tap_name}\"}}'",
+            f'-d \'{{"iface_id":"eth0","host_dev_name":"{tap_name}"}}\'',
             node=node,
         )
         proxmox.exec(
@@ -177,7 +177,9 @@ class NestedFirecrackerDeployer(BaseDeployer):
         version: str,
     ) -> None:
         """Download the Firecracker binary inside the LXC if it is missing."""
-        check = proxmox.exec(vmid, "which firecracker >/dev/null 2>&1 && echo OK", node=node)
+        check = proxmox.exec(
+            vmid, "which firecracker >/dev/null 2>&1 && echo OK", node=node
+        )
         if "OK" in check.stdout:
             return
 
@@ -194,6 +196,8 @@ class NestedFirecrackerDeployer(BaseDeployer):
             node=node,
         )
         # Verify again
-        check = proxmox.exec(vmid, "which firecracker >/dev/null 2>&1 && echo OK", node=node)
+        check = proxmox.exec(
+            vmid, "which firecracker >/dev/null 2>&1 && echo OK", node=node
+        )
         if "OK" not in check.stdout:
             raise RuntimeError("Failed to install Firecracker inside LXC")

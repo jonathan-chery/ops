@@ -221,6 +221,7 @@ def _microvm_provider_for(orchestrator, blueprint):
     from ops.utils.secrets import SecretManager
     from ops.utils.ssh import SSHKeyManager
     from ops.providers.microvm import MicroVMProvider
+
     config_mgr = ConfigManager()
     secret_mgr = SecretManager(config_mgr, blueprint.name)
     ssh_mgr = SSHKeyManager(secret_mgr.secrets_dir)

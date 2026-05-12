@@ -50,13 +50,18 @@ class SecretManager:
                 value = self._load_encrypted(path)
             else:
                 value = self.generate_secret(cfg.name, cfg.length)
-            return SecretValue(name=cfg.name, value=value, source="generated", encrypted_at_rest=True)
+            return SecretValue(
+                name=cfg.name, value=value, source="generated", encrypted_at_rest=True
+            )
 
         elif cfg.type == "prompt":
             import typer
+
             value = typer.prompt(f"Enter secret '{cfg.name}'", hide_input=True)
             self._save_encrypted(self._secret_file(cfg.name), value)
-            return SecretValue(name=cfg.name, value=value, source="prompt", encrypted_at_rest=True)
+            return SecretValue(
+                name=cfg.name, value=value, source="prompt", encrypted_at_rest=True
+            )
 
         elif cfg.type == "file":
             if not cfg.source_path:
@@ -65,15 +70,21 @@ class SecretManager:
             if not src.exists():
                 if cfg.required:
                     raise FileNotFoundError(f"Secret file not found: {src}")
-                return SecretValue(name=cfg.name, value="", source="file", encrypted_at_rest=False)
+                return SecretValue(
+                    name=cfg.name, value="", source="file", encrypted_at_rest=False
+                )
             value = src.read_text().strip()
             self._save_encrypted(self._secret_file(cfg.name), value)
-            return SecretValue(name=cfg.name, value=value, source="file", encrypted_at_rest=True)
+            return SecretValue(
+                name=cfg.name, value=value, source="file", encrypted_at_rest=True
+            )
 
         elif cfg.type == "infisical":
             # Will be resolved by InfisicalProvider in the orchestrator
             # For now, return placeholder; orchestrator fills in actual value
-            return SecretValue(name=cfg.name, value="", source="infisical", encrypted_at_rest=False)
+            return SecretValue(
+                name=cfg.name, value="", source="infisical", encrypted_at_rest=False
+            )
 
         else:
             raise ValueError(f"Unknown secret type: {cfg.type}")

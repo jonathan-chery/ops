@@ -11,7 +11,9 @@ class IPAllocator:
     def allocate(self, vmid: int, used_ips: List[str]) -> IPv4Address:
         ip = self.subnet.allocate_ip(vmid)
         if not self.subnet.is_ip_available(ip, used_ips):
-            raise ValueError(f"IP {ip} is not available in subnet {self.subnet.network}")
+            raise ValueError(
+                f"IP {ip} is not available in subnet {self.subnet.network}"
+            )
         return ip
 
     def suggest_vmid(self, used_vmids: List[int], start: int = 100) -> int:

@@ -44,12 +44,6 @@ lint-ruff:
     - ruff check src/
     - ruff format --check src/
 
-lint-black:
-  extends: .docker-job
-  stage: lint
-  script:
-    - black --check src/
-
 lint-yaml:
   extends: .docker-job
   stage: lint

@@ -15,6 +15,7 @@ class InfisicalProvider:
             return
         try:
             from infisical_sdk import InfisicalSDKClient
+
             self._client = InfisicalSDKClient(
                 client_id=self.config.client_id,
                 client_secret=self.config.client_secret,
@@ -26,7 +27,9 @@ class InfisicalProvider:
         except Exception as e:
             raise RuntimeError(f"Failed to initialize Infisical client: {e}")
 
-    def get_secret(self, path: str, key: str, environment: str = "dev") -> Optional[str]:
+    def get_secret(
+        self, path: str, key: str, environment: str = "dev"
+    ) -> Optional[str]:
         if not self.config.client_id or not self.config.client_secret:
             return None
         self._init_client()
@@ -41,8 +44,14 @@ class InfisicalProvider:
         except Exception:
             return None
 
-    def resolve_secret(self, name: str, path: str, key: str, environment: str = "dev") -> SecretValue:
+    def resolve_secret(
+        self, name: str, path: str, key: str, environment: str = "dev"
+    ) -> SecretValue:
         value = self.get_secret(path, key, environment)
         if value is None:
-            raise RuntimeError(f"Secret '{name}' not found in Infisical at path '{path}' key '{key}'")
-        return SecretValue(name=name, value=value, source="infisical", encrypted_at_rest=False)
+            raise RuntimeError(
+                f"Secret '{name}' not found in Infisical at path '{path}' key '{key}'"
+            )
+        return SecretValue(
+            name=name, value=value, source="infisical", encrypted_at_rest=False
+        )

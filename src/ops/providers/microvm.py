@@ -148,6 +148,7 @@ class MicroVMProvider:
             return None
         # Simple heuristic: look for first IPv4 address in JSON-like output
         import json
+
         try:
             data = json.loads(out)
             for iface in data.get("result", []):

@@ -8,7 +8,14 @@ from ..models.blueprint import AppBlueprint
 
 
 class NativeDeployer(BaseDeployer):
-    def deploy(self, proxmox: ProxmoxProvider, node: str, vmid: int, blueprint: AppBlueprint, env: Dict[str, str]) -> None:
+    def deploy(
+        self,
+        proxmox: ProxmoxProvider,
+        node: str,
+        vmid: int,
+        blueprint: AppBlueprint,
+        env: Dict[str, str],
+    ) -> None:
         native = blueprint.deployment.native
         if not native:
             raise RuntimeError("Native deployment config missing")
@@ -17,10 +24,20 @@ class NativeDeployer(BaseDeployer):
         if native.git_repo:
             proxmox.exec(vmid, f"rm -rf {native.app_dir}", node=node)
             tag_flag = f" --branch {native.tag}" if native.tag else ""
-            proxmox.exec(vmid, f"git clone{tag_flag} {native.git_repo} {native.app_dir}", node=node)
+            proxmox.exec(
+                vmid,
+                f"git clone{tag_flag} {native.git_repo} {native.app_dir}",
+                node=node,
+            )
             if native.tag:
-                proxmox.exec(vmid, f"cd {native.app_dir} && git checkout {native.tag}", node=node)
-            proxmox.exec(vmid, f"chown -R {native.app_user}:{native.app_user} {native.app_dir}", node=node)
+                proxmox.exec(
+                    vmid, f"cd {native.app_dir} && git checkout {native.tag}", node=node
+                )
+            proxmox.exec(
+                vmid,
+                f"chown -R {native.app_user}:{native.app_user} {native.app_dir}",
+                node=node,
+            )
 
         # Build steps
         for step in native.build_steps:
@@ -29,12 +46,23 @@ class NativeDeployer(BaseDeployer):
             cmd = step.cmd
             if env_str:
                 cmd = f"export {env_str} && {cmd}"
-            proxmox.exec(vmid, f"su - {user} -s /bin/bash -c 'cd {native.app_dir} && {cmd}'", node=node)
+            proxmox.exec(
+                vmid,
+                f"su - {user} -s /bin/bash -c 'cd {native.app_dir} && {cmd}'",
+                node=node,
+            )
 
         # Create systemd service
         self._create_systemd_service(proxmox, node, vmid, blueprint, env)
 
-    def _create_systemd_service(self, proxmox: ProxmoxProvider, node: str, vmid: int, blueprint: AppBlueprint, env: Dict[str, str]):
+    def _create_systemd_service(
+        self,
+        proxmox: ProxmoxProvider,
+        node: str,
+        vmid: int,
+        blueprint: AppBlueprint,
+        env: Dict[str, str],
+    ):
         native = blueprint.deployment.native
         service_name = blueprint.name
 
@@ -49,7 +77,11 @@ class NativeDeployer(BaseDeployer):
         local_env = Path(f"/tmp/ops_env_{blueprint.name}")
         local_env.write_text(env_file_content)
         proxmox.push_file(vmid, str(local_env), env_file_path, node=node)
-        proxmox.exec(vmid, f"chown {native.app_user}:{native.app_user} {env_file_path} && chmod 600 {env_file_path}", node=node)
+        proxmox.exec(
+            vmid,
+            f"chown {native.app_user}:{native.app_user} {env_file_path} && chmod 600 {env_file_path}",
+            node=node,
+        )
         local_env.unlink()
 
         # Create systemd unit
@@ -82,7 +114,12 @@ WantedBy=multi-user.target
 """
         local_unit = Path(f"/tmp/ops_unit_{blueprint.name}.service")
         local_unit.write_text(unit)
-        proxmox.push_file(vmid, str(local_unit), f"/etc/systemd/system/{service_name}.service", node=node)
+        proxmox.push_file(
+            vmid,
+            str(local_unit),
+            f"/etc/systemd/system/{service_name}.service",
+            node=node,
+        )
         local_unit.unlink()
 
         # Reload and start
@@ -90,14 +127,30 @@ WantedBy=multi-user.target
         proxmox.exec(vmid, f"systemctl enable --now {service_name}", node=node)
         time.sleep(3)
 
-    def get_logs(self, proxmox: ProxmoxProvider, node: str, vmid: int, blueprint: AppBlueprint, follow: bool = False, lines: int = 100) -> str:
+    def get_logs(
+        self,
+        proxmox: ProxmoxProvider,
+        node: str,
+        vmid: int,
+        blueprint: AppBlueprint,
+        follow: bool = False,
+        lines: int = 100,
+    ) -> str:
         flag = " -f" if follow else ""
-        result = proxmox.exec(vmid, f"journalctl -u {blueprint.name}{flag} -n {lines} --no-pager", node=node)
+        result = proxmox.exec(
+            vmid,
+            f"journalctl -u {blueprint.name}{flag} -n {lines} --no-pager",
+            node=node,
+        )
         return result.stdout or result.stderr
 
-    def restart_service(self, proxmox: ProxmoxProvider, node: str, vmid: int, blueprint: AppBlueprint) -> None:
+    def restart_service(
+        self, proxmox: ProxmoxProvider, node: str, vmid: int, blueprint: AppBlueprint
+    ) -> None:
         proxmox.exec(vmid, f"systemctl restart {blueprint.name}", node=node)
 
-    def get_service_status(self, proxmox: ProxmoxProvider, node: str, vmid: int, blueprint: AppBlueprint) -> str:
+    def get_service_status(
+        self, proxmox: ProxmoxProvider, node: str, vmid: int, blueprint: AppBlueprint
+    ) -> str:
         result = proxmox.exec(vmid, f"systemctl is-active {blueprint.name}", node=node)
         return result.stdout.strip() or "unknown"

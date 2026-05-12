@@ -43,9 +43,13 @@ class SSHKeyManager:
             self.generate_keypair(name)
         return str(private_path)
 
-    def ssh_client(self, name: str, hostname: str, username: str, port: int = 22) -> paramiko.SSHClient:
+    def ssh_client(
+        self, name: str, hostname: str, username: str, port: int = 22
+    ) -> paramiko.SSHClient:
         private_path = self.get_private_key(name)
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        client.connect(hostname, port=port, username=username, key_filename=private_path)
+        client.connect(
+            hostname, port=port, username=username, key_filename=private_path
+        )
         return client
