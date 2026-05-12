@@ -5,7 +5,8 @@ from typing import Optional
 
 from ops.models.blueprint import AppBlueprint
 from ops.models.state import DeploymentPhase, DeploymentState
-from ops.models.config import OpsConfig
+from ops.models.config import OpsConfig, ProxmoxConfig
+from ops.models.network import SubnetConfig
 from ops.providers.proxmox import ProxmoxProvider
 from ops.providers.database import DatabaseProvider
 from ops.providers.infisical import InfisicalProvider
@@ -21,6 +22,7 @@ from ops.core.heartbeat import HeartbeatManager
 from ops.core.audit import AuditLogger
 from ops.deployers.docker import DockerDeployer
 from ops.deployers.native import NativeDeployer
+from ops.deployers.base import BaseDeployer
 from ops.deployers.microvm import MicroVMDeployer
 from ops.deployers.nested_firecracker import NestedFirecrackerDeployer
 
@@ -34,7 +36,16 @@ class Orchestrator:
             raise RuntimeError(
                 "No Proxmox hosts configured. Run 'ops onboard --host <host>' first."
             )
-        self.proxmox = ProxmoxProvider(host_config)
+        self.proxmox = ProxmoxProvider(
+            ProxmoxConfig(
+                host=host_config.host,
+                user=host_config.user,
+                token_name=host_config.token_name,
+                token_value=host_config.token_value,
+                verify_ssl=host_config.verify_ssl,
+                node=host_config.node,
+            )
+        )
         self.db_provider = (
             DatabaseProvider(config.database) if config.database.host else None
         )
@@ -43,7 +54,13 @@ class Orchestrator:
         )
         self.state_mgr = StateManager()
         self.hb_mgr = HeartbeatManager()
-        self.ip_alloc = IPAllocator(config.network)
+        self.ip_alloc = IPAllocator(
+            SubnetConfig(
+                network=config.network.subnet,
+                gateway=config.network.gateway,
+                bridge=config.network.bridge,
+            )
+        )
         self.template_engine = TemplateEngine()
         self.audit = AuditLogger()
         self._host_name = host_config.name
@@ -289,6 +306,8 @@ class Orchestrator:
             print("    [OK] MicroVM backend — no LXC container needed")
             return
 
+        assert state.vmid is not None
+        assert state.node is not None
         print("--> [PROVISION] Creating LXC container...")
 
         # Resolve template volid. Works with restricted tokens (no storage perms needed).
@@ -370,6 +389,8 @@ class Orchestrator:
             self._save_state(state)
             return
 
+        assert state.vmid is not None
+        assert state.node is not None
         print("--> [HARDEN] Securing container...")
 
         config_mgr = ConfigManager()
@@ -419,6 +440,7 @@ Subsystem sftp /usr/lib/openssh/sftp-server
         # Create app user (for native deployments only)
         if blueprint.deployment.type == "native":
             native = blueprint.deployment.native
+            assert native is not None
             self.proxmox.exec(
                 state.vmid,
                 f"id {quote(native.app_user)} >/dev/null 2>&1 || useradd -r -m -d {quote(native.app_dir)} -s /bin/bash {quote(native.app_user)}",
@@ -458,6 +480,8 @@ Subsystem sftp /usr/lib/openssh/sftp-server
             self._save_state(state)
             return
 
+        assert state.vmid is not None
+        assert state.node is not None
         print("--> [INSTALL] Installing dependencies...")
 
         # Install system packages
@@ -486,6 +510,8 @@ Subsystem sftp /usr/lib/openssh/sftp-server
         print("    [OK] Dependencies installed")
 
     def _install_docker(self, state: DeploymentState, blueprint: AppBlueprint):
+        assert state.vmid is not None
+        assert state.node is not None
         result = self.proxmox.exec(state.vmid, "docker --version", node=state.node)
         if result.exit_code == 0:
             return
@@ -502,6 +528,8 @@ Subsystem sftp /usr/lib/openssh/sftp-server
         )
 
     def _install_native_runtime(self, state: DeploymentState, blueprint: AppBlueprint):
+        assert state.vmid is not None
+        assert state.node is not None
         runtime = blueprint.deployment.runtime
         version = blueprint.deployment.runtime_version
 
@@ -541,6 +569,8 @@ Subsystem sftp /usr/lib/openssh/sftp-server
             )
 
     def _install_podman(self, state: DeploymentState, blueprint: AppBlueprint):
+        assert state.vmid is not None
+        assert state.node is not None
         result = self.proxmox.exec(state.vmid, "podman --version", node=state.node)
         if result.exit_code == 0:
             return
@@ -595,6 +625,8 @@ Subsystem sftp /usr/lib/openssh/sftp-server
             print("[SKIP] Deploy already complete")
             return
 
+        assert state.vmid is not None
+        assert state.node is not None
         print("--> [DEPLOY] Deploying application...")
 
         # Build template context with nested namespace support
@@ -618,7 +650,7 @@ Subsystem sftp /usr/lib/openssh/sftp-server
         elif self._is_firecracker_microvm(state, blueprint):
             # MicroVM path: no templates; deploy via MicroVMDeployer
             microvm = self._microvm_provider_for(blueprint)
-            deployer = MicroVMDeployer(microvm)
+            deployer: BaseDeployer = MicroVMDeployer(microvm)
             deployer.deploy(self.proxmox, state.node, state.vmid, blueprint, env)
         elif self._is_firecracker_lxc(state, blueprint):
             # Nested Firecracker path: push templates into LXC
@@ -649,6 +681,7 @@ Subsystem sftp /usr/lib/openssh/sftp-server
                     state.vmid, f"chmod {tpl.mode} {tpl.dest}", node=state.node
                 )
                 if blueprint.deployment.type == "native":
+                    assert blueprint.deployment.native is not None
                     self.proxmox.exec(
                         state.vmid,
                         f"chown {blueprint.deployment.native.app_user}:{blueprint.deployment.native.app_user} {tpl.dest}",
@@ -678,6 +711,9 @@ Subsystem sftp /usr/lib/openssh/sftp-server
             print("[SKIP] Finalize already complete")
             return
 
+        assert state.vmid is not None
+        assert state.ip is not None
+        assert state.node is not None
         print("--> [FINALIZE] Running health checks...")
 
         # Health check
@@ -712,7 +748,7 @@ Subsystem sftp /usr/lib/openssh/sftp-server
     def teardown(self, app_name: str, blueprint=None, skip_backup: bool = False):
         state = self._get_state(app_name)
 
-        if not state.vmid:
+        if state.vmid is None:
             print(f"[WARN] No container found for {app_name}")
             return
 
@@ -753,6 +789,8 @@ Subsystem sftp /usr/lib/openssh/sftp-server
     def _backup_before_teardown(self, state: DeploymentState, blueprint):
         if not blueprint:
             return
+        assert state.vmid is not None
+        assert state.node is not None
         backup_dir = Path("~/.ops/backups").expanduser()
         backup_dir.mkdir(parents=True, exist_ok=True)
         timestamp = time.strftime("%Y%m%d_%H%M%S")
@@ -795,8 +833,9 @@ Subsystem sftp /usr/lib/openssh/sftp-server
 
     def restart_service(self, app_name: str, blueprint: AppBlueprint):
         state = self._get_state(app_name)
-        if not state.vmid:
+        if state.vmid is None:
             raise RuntimeError(f"No container found for {app_name}")
+        assert state.node is not None
 
         # Sync secrets back to state before restart
         self._sync_secrets_to_state(app_name, state)
@@ -804,7 +843,7 @@ Subsystem sftp /usr/lib/openssh/sftp-server
         if blueprint.deployment.type == "firecracker":
             if state.backend == "pve-microvm":
                 microvm = self._microvm_provider_for(blueprint)
-                deployer = MicroVMDeployer(microvm)
+                deployer: BaseDeployer = MicroVMDeployer(microvm)
                 deployer.restart_service(
                     self.proxmox, state.node, state.vmid, blueprint
                 )
@@ -840,13 +879,14 @@ Subsystem sftp /usr/lib/openssh/sftp-server
         lines: int = 100,
     ):
         state = self._get_state(app_name)
-        if not state.vmid:
+        if state.vmid is None:
             raise RuntimeError(f"No container found for {app_name}")
+        assert state.node is not None
 
         if blueprint.deployment.type == "firecracker":
             if state.backend == "pve-microvm":
                 microvm = self._microvm_provider_for(blueprint)
-                deployer = MicroVMDeployer(microvm)
+                deployer: BaseDeployer = MicroVMDeployer(microvm)
                 return deployer.get_logs(
                     self.proxmox, state.node, state.vmid, blueprint, follow, lines
                 )
@@ -868,7 +908,7 @@ Subsystem sftp /usr/lib/openssh/sftp-server
 
     def sync(self, app_name: str, blueprint: AppBlueprint):
         state = self._get_state(app_name)
-        if not state.vmid:
+        if state.vmid is None:
             raise RuntimeError(f"No container found for {app_name}")
 
         if blueprint.deployment.type == "none":

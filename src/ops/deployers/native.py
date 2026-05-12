@@ -64,6 +64,7 @@ class NativeDeployer(BaseDeployer):
         env: Dict[str, str],
     ):
         native = blueprint.deployment.native
+        assert native is not None
         service_name = blueprint.name
 
         # Build environment file content

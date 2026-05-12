@@ -33,6 +33,7 @@ class InfisicalProvider:
         if not self.config.client_id or not self.config.client_secret:
             return None
         self._init_client()
+        assert self._client is not None
         try:
             response = self._client.secrets.get_secret(
                 secretPath=path,

@@ -101,7 +101,7 @@ build-binary:
       - dist/
     expire_in: 1 week
     when: always
-  allow_failure: true
+  allow_failure: false
   only:
     - tags
     - main
