@@ -214,8 +214,11 @@ def main() -> int:
 
     level = _bump_level(commits)
     if level is None:
-        print("[INFO] No conventional commits found. Skipping auto-tag.")
-        return 0
+        # No conventional commits found, but there ARE commits since the last
+        # tag. Treat any merge as a patch-level change so the release
+        # pipeline always advances.
+        level = "patch"
+        print("[INFO] No conventional commits found; defaulting to patch bump.")
 
     current = _parse_version(last_tag)
     next_ver_tuple = _next_version(current, level)
