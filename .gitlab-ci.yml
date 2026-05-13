@@ -198,7 +198,38 @@ publish-docs:
       mkdocs gh-deploy --remote-name github --force
 
 # ------------------------------------------------------------------
-# Release stage — only on main branch after successful build
+# Mirror stage — keep GitHub main branch in sync with GitLab
+# ------------------------------------------------------------------
+
+mirror-source:
+  stage: release
+  tags:
+    - docker
+  image: python:3.12-slim
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  needs:
+    - job: build-linux-amd64
+      artifacts: false
+    - job: test-pytest
+      artifacts: false
+    - job: typecheck-mypy
+      artifacts: false
+  variables:
+    GIT_DEPTH: "0"
+  before_script:
+    - apt-get update -y && apt-get install -y --no-install-recommends git
+    - git config user.email "ops-ci@cloudinit.dev"
+    - git config user.name "Ops CI"
+  script:
+    - echo "Mirroring main branch to GitHub..."
+    - |
+      git remote add github "https://${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" 2>/dev/null || true
+      git push github HEAD:main --force
+    - echo "[OK] main branch mirrored to github.com/$GITHUB_REPOSITORY"
+
+# ------------------------------------------------------------------
+# Release stage — auto-tag on main after successful build
 # ------------------------------------------------------------------
 
 auto-tag:
@@ -210,8 +241,6 @@ auto-tag:
     - if: $CI_COMMIT_BRANCH == "main"
   needs:
     - job: build-linux-amd64
-      artifacts: false
-    - job: build-linux-arm64
       artifacts: false
     - job: test-pytest
       artifacts: false
@@ -237,8 +266,6 @@ auto-tag:
       # Ensure GitHub remote exists so the tag is also pushed there
       git remote add github "https://${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" 2>/dev/null || true
     - python scripts/auto_tag.py
-    # Push the new tag to GitHub so the mirror triggers release pipelines
-    - git push github --tags
 
 # ------------------------------------------------------------------
 # Release stage — only on version tags
