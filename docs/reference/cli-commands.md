@@ -82,6 +82,73 @@ ops logs APP [-f] [-n LINES]
 | `-f` / `--follow` | flag | False | Follow log tail |
 | `-n` / `--lines` | int | 100 | Number of lines |
 
+Logs are persisted to `~/.ops/logs/<APP>.log` in addition to real-time streaming.
+
+## Observability & Day-2 Operations
+
+### `events`
+
+Tail or query the audit log.
+
+```bash
+ops events [--app APP] [--status ok|failed] [--since ISO8601] [--follow] [--tail N]
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `-a` / `--app` | str | None | Filter by app name |
+| `-s` / `--status` | str | None | Filter by status |
+| `--since` | str | None | ISO-8601 timestamp cutoff |
+| `-f` / `--follow` | flag | False | Follow new entries |
+| `-n` / `--tail` | int | None | Limit to N most recent events |
+
+### `metrics`
+
+Fetch Prometheus exposition from the application's node_exporter sidecar.
+
+```bash
+ops metrics APP [--raw]
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `--raw` | flag | False | Print raw exposition text |
+
+### `watch`
+
+Continuously monitor application health and alert on failure.
+
+```bash
+ops watch APP [--interval SECONDS] [--exit-on-failure]
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `-i` / `--interval` | int | 30 | Seconds between checks |
+| `--exit-on-failure` | flag | False | Exit CLI after first failure |
+
+### `alerts-test`
+
+Send a test alert payload to verify the configured webhook.
+
+```bash
+ops alerts-test
+```
+
+## Configuration
+
+### `config`
+
+```bash
+ops config --show      # Display current config
+ops config --edit      # Open in $EDITOR
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `-f` / `--follow` | flag | False | Follow log tail |
+| `-n` / `--lines` | int | 100 | Number of lines |
+
 ### `exec`
 
 Run a command inside the container.

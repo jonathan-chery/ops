@@ -58,10 +58,19 @@ class MicroVMDeployer(BaseDeployer):
         lines: int = 100,
     ) -> str:
         flag = " -f" if follow else ""
-        out, err, rc = self.microvm._exec(
-            f"qm terminal {vmid}{flag} --timeout 5 || true"
+        # For non-interactive use, cap the follow duration
+        timeout_flag = " --timeout 10" if follow else ""
+        out, err, _rc = self.microvm._exec(
+            f"qm terminal {vmid}{flag}{timeout_flag} || true"
         )
-        return out or err or "No logs available"
+        result = out or err or "No logs available"
+        # Persist to local log file
+        from ops.utils.log_shipper import LogShipper
+
+        shipper = LogShipper()
+        for line in result.splitlines():
+            shipper.write_json(blueprint.name, "microvm_console", line)
+        return result
 
     def restart_service(
         self,

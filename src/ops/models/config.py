@@ -79,7 +79,7 @@ class ProxmoxHostConfig(HostConfig):
     @classmethod
     def _validate_host(cls, v):
         """Reject shell metacharacters in host string."""
-        bad = set(";|\u0026$`'\"\n\r\u003c\u003e")
+        bad = set(";|&$`'\"\n\r<>")
         if any(c in v for c in bad):
             raise ValueError(f"Host contains forbidden characters: {v}")
         return v
@@ -109,6 +109,14 @@ class ProxmoxConfig(BaseModel):
     node: Optional[str] = None
 
 
+class AlertingGlobalConfig(BaseModel):
+    """Global alerting defaults for the Ops CLI."""
+
+    enabled: bool = False
+    webhook_url: Optional[str] = None
+    cooldown_seconds: int = 900
+
+
 class OpsConfig(BaseModel):
     """Top-level ops configuration supporting multiple hosts and clustering."""
 
@@ -119,6 +127,7 @@ class OpsConfig(BaseModel):
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     defaults: DefaultsConfig = Field(default_factory=DefaultsConfig)
     cluster: ClusterConfig = Field(default_factory=ClusterConfig)
+    alerting: AlertingGlobalConfig = Field(default_factory=AlertingGlobalConfig)
 
     # Backwards-compatibility: if hosts is empty, ConfigManager auto-migrates
     # the legacy flat `proxmox:` block into hosts[0].
