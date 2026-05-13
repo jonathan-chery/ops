@@ -11,16 +11,22 @@ import requests
 from ..models.blueprint import AppBlueprint
 from ..models.state import DeploymentState
 from ..providers.proxmox import ProxmoxProvider
+from ..core.alerts import AlertManager
 
 # Suppress SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 class HeartbeatManager:
-    def __init__(self, heartbeat_dir: str = "~/.ops/heartbeats"):
+    def __init__(
+        self,
+        heartbeat_dir: str = "~/.ops/heartbeats",
+        alert_manager: Optional[AlertManager] = None,
+    ):
         self.heartbeat_dir = Path(heartbeat_dir).expanduser()
         self.heartbeat_dir.mkdir(parents=True, exist_ok=True)
         os.chmod(self.heartbeat_dir, 0o700)
+        self.alert_manager = alert_manager
 
     def _heartbeat_path(self, app_name: str) -> Path:
         return self.heartbeat_dir / f"{app_name}_latest.json"
@@ -61,12 +67,25 @@ class HeartbeatManager:
                 pass
             time.sleep(hc.interval)
 
-        return {
+        result = {
             "status": "failed",
             "url": url,
             "attempts": hc.retries,
             "error": f"Did not reach expected status {hc.expected_status} after {hc.retries} attempts",
         }
+
+        # Trigger alert if configured
+        if self.alert_manager and blueprint.alerting.enabled:
+            self.alert_manager.send_alert(
+                app_name=blueprint.name,
+                vmid=vmid,
+                node=node,
+                error=str(result["error"]),
+                status="critical",
+                details=result,
+            )
+
+        return result
 
     def generate_heartbeat(
         self,
@@ -106,4 +125,4 @@ class HeartbeatManager:
         if not path.exists():
             return None
         with open(path, "r") as f:
-            return json.load(f)
+            return dict(json.load(f))

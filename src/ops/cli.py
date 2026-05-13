@@ -1,4 +1,5 @@
 import typer
+import json
 import yaml
 from typing import Optional, List
 
@@ -151,6 +152,22 @@ def status(app_name: Optional[str] = typer.Argument(None)):
         if not state or not state.vmid:
             typer.echo(f"[WARN] No container found for {app_name}")
             raise typer.Exit(1)
+
+        # MicroVM path
+        if state.backend == "pve-microvm":
+            blueprint_mgr = _get_blueprint_manager()
+            blueprint = blueprint_mgr.load(app_name)
+            microvm = _microvm_provider_for(orchestrator, blueprint)
+            vm_status = microvm.get_vm_status(state.vmid)
+            vm_ip = microvm.get_vm_ip(state.vmid) or state.ip
+            typer.echo(f"App:        {app_name}")
+            typer.echo(f"VMID:       {state.vmid}")
+            typer.echo(f"Hostname:   {blueprint.container.hostname}")
+            typer.echo(f"Status:     {vm_status}")
+            typer.echo(f"IP:         {vm_ip}")
+            typer.echo("Backend:    pve-microvm")
+            return
+
         container = orchestrator.proxmox.get_container(state.vmid, state.node)
         if container:
             typer.echo(f"App:        {app_name}")
@@ -765,6 +782,137 @@ def cluster_status():
         typer.echo(
             f"{n.node_id:<36} {n.name:<20} {n.host:<16} {n.status:<10} {n.transport}"
         )
+
+
+@app.command("events")
+def events(
+    app: Optional[str] = typer.Option(None, "--app", "-a", help="Filter by app name"),
+    status: Optional[str] = typer.Option(
+        None, "--status", "-s", help="Filter by status"
+    ),
+    since: Optional[str] = typer.Option(None, "--since", help="ISO-8601 timestamp"),
+    follow: bool = typer.Option(False, "--follow", "-f", help="Follow new events"),
+    tail: Optional[int] = typer.Option(
+        None, "--tail", "-n", help="Number of events to show"
+    ),
+):
+    """Tail or query the audit log."""
+    from ops.core.audit import AuditLogger
+
+    logger = AuditLogger()
+    if follow:
+        for event in logger.follow_events(app=app, status=status):
+            typer.echo(json.dumps(event))
+    else:
+        results = logger.read_events(app=app, status=status, since=since, tail=tail)
+        for event in results:
+            typer.echo(json.dumps(event))
+
+
+@app.command("metrics")
+def metrics_cmd(
+    app_name: str = typer.Argument(..., help="Application name"),
+    raw: bool = typer.Option(False, "--raw", help="Show raw Prometheus exposition"),
+):
+    """Fetch metrics from the application's node_exporter sidecar."""
+    import requests
+
+    state_mgr = StateManager()
+    state = state_mgr.load(app_name)
+    if not state or not state.vmid:
+        typer.echo(f"[WARN] No container found for {app_name}")
+        raise typer.Exit(1)
+
+    blueprint_mgr = _get_blueprint_manager()
+    blueprint = blueprint_mgr.load(app_name)
+    scrape_port = blueprint.metrics.scrape_port if blueprint.metrics else 9100
+    url = f"http://{state.ip}:{scrape_port}/metrics"
+
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+    except requests.RequestException as e:
+        typer.echo(f"[ERROR] Could not fetch metrics: {e}", err=True)
+        raise typer.Exit(1)
+
+    if raw:
+        typer.echo(response.text)
+    else:
+        # Simple human-readable summary
+        lines = response.text.splitlines()
+        for line in lines:
+            if line.startswith("#"):
+                continue
+            if "node_" in line and "_total" not in line:
+                typer.echo(line)
+
+
+@app.command("watch")
+def watch(
+    app_name: str,
+    interval: int = typer.Option(30, "--interval", "-i", help="Seconds between checks"),
+    exit_on_failure: bool = typer.Option(
+        False, "--exit-on-failure", help="Exit after first failure"
+    ),
+):
+    """Continuously monitor an application and alert on health-check failure."""
+    import signal
+    import time
+
+    state_mgr = StateManager()
+    state = state_mgr.load(app_name)
+    if not state or not state.vmid:
+        typer.echo(f"[WARN] No container found for {app_name}")
+        raise typer.Exit(1)
+
+    blueprint_mgr = _get_blueprint_manager()
+    blueprint = blueprint_mgr.load(app_name)
+    orchestrator = _get_orchestrator()
+
+    running = True
+
+    def _handle_sigint(signum, frame):
+        nonlocal running
+        running = False
+
+    signal.signal(signal.SIGINT, _handle_sigint)
+    signal.signal(signal.SIGTERM, _handle_sigint)
+
+    typer.echo(f"[INFO] Watching {app_name} every {interval}s (Ctrl+C to stop)")
+    while running:
+        health = orchestrator.hb_mgr.run_health_check(
+            blueprint, state.vmid, str(state.ip), orchestrator.proxmox, state.node
+        )
+        if health.get("status") == "ok":
+            typer.echo(f"[OK] {app_name} healthy")
+        elif health.get("status") == "skipped":
+            typer.echo(f"[INFO] {app_name} health check skipped")
+        else:
+            typer.echo(f"[WARN] {app_name} unhealthy: {health.get('error')}")
+            if exit_on_failure:
+                raise typer.Exit(1)
+        time.sleep(interval)
+
+    typer.echo("[INFO] Watch stopped.")
+
+
+@app.command("alerts-test")
+def alerts_test():
+    """Send a test alert to verify webhook configuration."""
+    from ops.core.alerts import AlertManager
+    from ops.core.config import ConfigManager
+
+    config_mgr = ConfigManager()
+    config = config_mgr.load()
+    alert_mgr = AlertManager(
+        webhook_url=config.alerting.webhook_url,
+        cooldown_seconds=config.alerting.cooldown_seconds,
+    )
+    if alert_mgr.test_alert():
+        typer.echo("[OK] Test alert sent successfully")
+    else:
+        typer.echo("[ERROR] Test alert failed (check webhook_url)", err=True)
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":

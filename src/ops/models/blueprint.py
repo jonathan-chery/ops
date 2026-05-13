@@ -1,6 +1,6 @@
 from typing import List, Dict, Optional, Literal, Any
 from ipaddress import IPv4Address
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 BLUEPRINT_SCHEMA_VERSION = "1.2"
 
@@ -159,13 +159,44 @@ class BlueprintDatabaseConfig(BaseModel):
     name: Optional[str] = None
 
 
+class MetricsConfig(BaseModel):
+    """Prometheus node_exporter sidecar configuration.
+
+    Opt-out by default (``enabled=True``).  Set ``enabled: false`` in the
+    blueprint to skip sidecar installation.
+    """
+
+    enabled: bool = True
+    scrape_port: int = 9100
+
+
+class AlertingConfig(BaseModel):
+    """Per-application alerting configuration."""
+
+    enabled: bool = False
+    webhook_url: Optional[str] = None
+    cooldown_seconds: int = 900  # 15 minutes
+
+
 class HealthCheckConfig(BaseModel):
     enabled: bool = False
     url: Optional[str] = None
+    port: Optional[int] = None
+    path: Optional[str] = None
     method: str = "GET"
     expected_status: int = 200
     retries: int = 30
     interval: int = 5
+
+    @model_validator(mode="after")
+    def validate_url(self):
+        if self.url is not None:
+            return self
+        if self.port is not None and self.path is not None:
+            self.url = f"http://{{ip}}:{self.port}{self.path}"
+        elif self.port is not None:
+            self.url = f"http://{{ip}}:{self.port}"
+        return self
 
 
 class AppBlueprint(BaseModel):
@@ -181,6 +212,8 @@ class AppBlueprint(BaseModel):
     templates: List[TemplateConfig] = Field(default_factory=list)
     database: BlueprintDatabaseConfig = Field(default_factory=BlueprintDatabaseConfig)
     health_check: HealthCheckConfig = Field(default_factory=HealthCheckConfig)
+    metrics: MetricsConfig = Field(default_factory=MetricsConfig)
+    alerting: AlertingConfig = Field(default_factory=AlertingConfig)
 
     @field_validator("version")
     @classmethod

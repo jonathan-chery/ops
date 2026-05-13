@@ -70,11 +70,14 @@
 
 ## Future Plans
 
-### v1.3 — Observability & Day-2 Operations
-- [ ] Persistent console/serial log shipping for microVMs (`qm monitor` / `qm terminal` streaming)
-- [ ] Metrics exporter sidecar (Prometheus node_exporter inside LXC/microVM)
-- [ ] Alerting integration (webhook/PagerDuty on health-check failure)
-- [ ] `ops events` command to tail `audit.log`
+## v1.3 — Observability & Day-2 Operations (Current)
+- [x] Persistent console/serial log shipping for microVMs (`ops logs` now streams and persists to `~/.ops/logs/`)
+- [x] Metrics exporter sidecar (Prometheus `node_exporter` inside LXC/microVM — enabled by default, opt-out via `metrics.enabled: false`)
+- [x] Alerting integration (generic HTTP webhook on health-check failure with per-app cooldown)
+- [x] `ops events` command to tail `audit.log`
+- [x] `ops watch <app>` continuous monitoring with `--exit-on-failure`
+- [x] `ops metrics <app>` to fetch Prometheus exposition
+- [x] `ops alerts-test` to verify webhook configuration
 
 ### v1.4 — Cluster GA
 - [ ] Multi-node placement strategy (bin-packing, anti-affinity labels)

@@ -20,6 +20,7 @@ from ops.core.config import ConfigManager
 from ops.core.state import StateManager
 from ops.core.heartbeat import HeartbeatManager
 from ops.core.audit import AuditLogger
+from ops.core.alerts import AlertManager
 from ops.deployers.docker import DockerDeployer
 from ops.deployers.native import NativeDeployer
 from ops.deployers.base import BaseDeployer
@@ -53,7 +54,11 @@ class Orchestrator:
             InfisicalProvider(config.infisical) if config.infisical.client_id else None
         )
         self.state_mgr = StateManager()
-        self.hb_mgr = HeartbeatManager()
+        alert_mgr = AlertManager(
+            webhook_url=config.alerting.webhook_url,
+            cooldown_seconds=config.alerting.cooldown_seconds,
+        )
+        self.hb_mgr = HeartbeatManager(alert_manager=alert_mgr)
         self.ip_alloc = IPAllocator(
             SubnetConfig(
                 network=config.network.subnet,
@@ -505,6 +510,18 @@ Subsystem sftp /usr/lib/openssh/sftp-server
         if blueprint.dependencies.get("install_podman"):
             self._install_podman(state, blueprint)
 
+        # Install metrics exporter sidecar (opt-out)
+        if blueprint.metrics.enabled:
+            print("    [INFO] Installing node_exporter sidecar...")
+            from ops.utils.metrics_sidecar import install_node_exporter_lxc
+
+            install_node_exporter_lxc(
+                self.proxmox, state.vmid, state.node, blueprint.metrics.scrape_port
+            )
+            print(
+                f"    [OK] node_exporter listening on :{blueprint.metrics.scrape_port}"
+            )
+
         state.mark_phase_complete(DeploymentPhase.INSTALL)
         self._save_state(state)
         print("    [OK] Dependencies installed")
@@ -626,6 +643,7 @@ Subsystem sftp /usr/lib/openssh/sftp-server
             return
 
         assert state.vmid is not None
+        assert state.ip is not None
         assert state.node is not None
         print("--> [DEPLOY] Deploying application...")
 
@@ -652,6 +670,24 @@ Subsystem sftp /usr/lib/openssh/sftp-server
             microvm = self._microvm_provider_for(blueprint)
             deployer: BaseDeployer = MicroVMDeployer(microvm)
             deployer.deploy(self.proxmox, state.node, state.vmid, blueprint, env)
+
+            # Install metrics sidecar inside microVM via SSH if enabled
+            if blueprint.metrics.enabled:
+                print("    [INFO] Installing node_exporter inside microVM...")
+                from ops.utils.metrics_sidecar import install_node_exporter_microvm
+                from ops.utils.ssh import SSHKeyManager
+
+                config_mgr = ConfigManager()
+                secret_mgr = SecretManager(config_mgr, blueprint.name)
+                ssh_mgr = SSHKeyManager(secret_mgr.secrets_dir)
+                install_node_exporter_microvm(
+                    ip=state.ip,
+                    ssh_key_path=ssh_mgr.get_private_key("root"),
+                    port=blueprint.metrics.scrape_port,
+                )
+                print(
+                    f"    [OK] node_exporter microVM sidecar on :{blueprint.metrics.scrape_port}"
+                )
         elif self._is_firecracker_lxc(state, blueprint):
             # Nested Firecracker path: push templates into LXC
             for tpl in blueprint.templates:

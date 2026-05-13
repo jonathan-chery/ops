@@ -126,7 +126,18 @@ class NestedFirecrackerDeployer(BaseDeployer):
         follow: bool = False,
         lines: int = 100,
     ) -> str:
-        return "Nested Firecracker logs: not yet implemented"
+        log_path = f"/tmp/firecracker_{blueprint.name}.log"
+        cmd = f"cat {log_path} 2>/dev/null || echo 'No Firecracker log found'"
+        if follow:
+            cmd = f"tail -f {log_path} & sleep 10; kill %1 2>/dev/null || true"
+        result = proxmox.exec(vmid, cmd, node=node)
+        output = result.stdout or "No logs available"
+        from ops.utils.log_shipper import LogShipper
+
+        shipper = LogShipper()
+        for line in output.splitlines():
+            shipper.write_json(blueprint.name, "nested_firecracker", line)
+        return output
 
     def restart_service(
         self,
